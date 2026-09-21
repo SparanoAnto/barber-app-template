@@ -6,6 +6,7 @@ import { Navigation } from './components/Navigation'
 import { AdminApprovals } from './components/AdminApprovals'
 import { AppointmentsView } from './components/AppointmentsView'
 import { AdminReports } from './components/AdminReports'
+import { AdminStaff } from './components/AdminStaff'
 import { InstallGuideModal } from './components/InstallGuideModal'
 import './App.css'
 
@@ -55,11 +56,10 @@ export default function App() {
   const [pwdLoading, setPwdLoading] = useState(false)
   const [pwdMessage, setPwdMessage] = useState({ type: '', text: '' })
 
-  // Sub-tab Admin
+  // Sub-tab Admin (impostata di default su 'approvals')
   const [adminSubTab, setAdminSubTab] = useState('approvals')
 
   const [services, setServices] = useState([])
-  const [barbers, setBarbers] = useState([])
   const [pendingCount, setPendingCount] = useState(0)
 
   const [editingAppointment, setEditingAppointment] = useState(null)
@@ -144,10 +144,9 @@ export default function App() {
   }
 
   async function loadSaloneData() {
+    // Carichiamo solo i servizi necessari a livello globale; i barbieri sono gestiti da BookingView
     const { data: sData } = await supabase.from('services').select('*')
-    const { data: bData } = await supabase.from('barbers').select('*').eq('is_active', true)
     if (sData) setServices(sData)
-    if (bData) setBarbers(bData)
   }
 
   async function handleChangePassword(e) {
@@ -285,7 +284,6 @@ export default function App() {
         {activeTab === 'services' && (
           <BookingView 
             services={services} 
-            barbers={barbers} 
             userId={session.user.id} 
             isAdmin={profile?.role === 'admin'}
             editingAppointment={editingAppointment}
@@ -307,7 +305,7 @@ export default function App() {
               <p style={{ margin: '8px 0' }}>📍 {salonSettings.address || 'Indirizzo da configurare'}</p>
               {salonSettings.phone && <p style={{ margin: '8px 0' }}>📞 Tel: {salonSettings.phone}</p>}
               <p style={{ color: 'var(--barber-red)', fontWeight: 'bold', margin: '15px 0 0 0' }}>
-                💈 Chiuso il {salonSettings.closed_day || 'Domenica e Lunedì'}
+                💈 Chiuso {salonSettings.closed_day || 'Domenica e Lunedì'}
               </p>
             </div>
           </div>
@@ -451,18 +449,19 @@ export default function App() {
 
         {activeTab === 'admin' && profile?.role === 'admin' && (
           <div>
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
               <button
                 onClick={() => setAdminSubTab('approvals')}
                 style={{
                   flex: 1,
-                  padding: '10px',
+                  minWidth: '100px',
+                  padding: '10px 8px',
                   borderRadius: '8px',
                   border: adminSubTab === 'approvals' ? '1px solid var(--barber-red)' : '1px solid var(--border-color)',
                   backgroundColor: adminSubTab === 'approvals' ? 'var(--barber-red)' : 'rgba(24, 24, 24, 0.85)',
                   color: '#FFF',
                   fontWeight: 'bold',
-                  fontSize: '0.85rem',
+                  fontSize: '0.8rem',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease'
                 }}
@@ -471,16 +470,36 @@ export default function App() {
               </button>
 
               <button
+                onClick={() => setAdminSubTab('staff')}
+                style={{
+                  flex: 1,
+                  minWidth: '100px',
+                  padding: '10px 8px',
+                  borderRadius: '8px',
+                  border: adminSubTab === 'staff' ? '1px solid var(--barber-red)' : '1px solid var(--border-color)',
+                  backgroundColor: adminSubTab === 'staff' ? 'var(--barber-red)' : 'rgba(24, 24, 24, 0.85)',
+                  color: '#FFF',
+                  fontWeight: 'bold',
+                  fontSize: '0.8rem',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                ✂️ Staff & Ferie
+              </button>
+
+              <button
                 onClick={() => setAdminSubTab('reports')}
                 style={{
                   flex: 1,
-                  padding: '10px',
+                  minWidth: '100px',
+                  padding: '10px 8px',
                   borderRadius: '8px',
                   border: adminSubTab === 'reports' ? '1px solid var(--barber-red)' : '1px solid var(--border-color)',
                   backgroundColor: adminSubTab === 'reports' ? 'var(--barber-red)' : 'rgba(24, 24, 24, 0.85)',
                   color: '#FFF',
                   fontWeight: 'bold',
-                  fontSize: '0.85rem',
+                  fontSize: '0.8rem',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease'
                 }}
@@ -489,12 +508,18 @@ export default function App() {
               </button>
             </div>
 
-            {adminSubTab === 'approvals' ? (
+            {adminSubTab === 'approvals' && (
               <div>
                 <h3 className="section-title">Pannello Approvazioni</h3>
                 <AdminApprovals onApprovalChange={fetchPendingCount} />
               </div>
-            ) : (
+            )}
+
+            {adminSubTab === 'staff' && (
+              <AdminStaff />
+            )}
+
+            {adminSubTab === 'reports' && (
               <AdminReports isOwner={profile?.is_owner || false} />
             )}
           </div>

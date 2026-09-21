@@ -22,7 +22,7 @@ body {
 /* Contenitore principale */
 .app-container {
   width: 100%;
-  max-width: 480px;
+  max-width: 480px; /* Default su Smartphone */
   margin: 0 auto;
   min-height: 100vh;
   background-color: #121212;
@@ -34,10 +34,19 @@ body {
   position: relative;
   box-shadow: 0 0 30px rgba(0,0,0,0.8);
   box-sizing: border-box;
-  overflow: hidden; /* Taglia eventuali elementi fuori bordo per evitare lo scroll orizzontale */
+  overflow-x: hidden; 
 }
 
-/* Sfondo watermark rimossa la scritta statica '31 STREET' */
+/* 💻 QUANDO L'APP VIENE APERTA DA TABLET O PC (Da 768px in su) */
+@media (min-width: 768px) {
+  .app-container {
+    max-width: 1200px; 
+    padding-left: 30px;
+    padding-right: 30px;
+  }
+}
+
+/* Sfondo watermark */
 .app-container::before {
   content: "";
   position: absolute;
@@ -133,7 +142,7 @@ body {
   color: #ffffff;
 }
 
-/* Card Contenitore */
+/* Card Contenitore Corretta e Sicura al 100% per evitare sbavature */
 .info-card {
   background-color: var(--bg-card);
   border: 1px solid var(--border-color);
@@ -142,6 +151,7 @@ body {
   margin-top: 10px;
   backdrop-filter: blur(5px);
   width: 100%;
+  max-width: 100%;
   box-sizing: border-box;
 }
 
@@ -182,4 +192,38 @@ body {
   background-color: var(--barber-red);
   border-color: var(--barber-red);
   color: #ffffff;
+}
+
+/* ========================================================= */
+/* 📱💻 GRIGLIE RESPONSIVE PER I MODULI ADMIN E PRENOTAZIONE */
+/* ========================================================= */
+
+.admin-staff-responsive-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+@media (min-width: 900px) {
+  .admin-staff-responsive-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+}
+
+.booking-responsive-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+@media (min-width: 768px) {
+  .booking-responsive-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    align-items: start;
+  }
 }
