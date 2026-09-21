@@ -161,7 +161,7 @@ export function AdminReports({ isOwner = false }) {
   }
 
   return (
-    <div style={{ paddingBottom: '20px' }}>
+    <div className="booking-container">
       <h2 className="section-title">📊 Report & Statistiche</h2>
 
       {/* Selettore Mese */}
@@ -285,7 +285,8 @@ const inputStyle = {
   backgroundColor: 'rgba(24, 24, 24, 0.85)',
   color: '#FFF',
   fontSize: '14px',
-  outline: 'none'
+  outline: 'none',
+  boxSizing: 'border-box' // <-- CORRETTO QUI
 }
 
 const statCardStyle = {

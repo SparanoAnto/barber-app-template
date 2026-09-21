@@ -17,7 +17,6 @@ const DEFAULT_HOLIDAYS = [
 
 export function BookingView({ 
   services, 
-  barbers, 
   userId, 
   isAdmin, 
   editingAppointment, 
@@ -31,11 +30,14 @@ export function BookingView({
 }) {
   const [selectedServices, setSelectedServices] = useState([])
   const [selectedDate, setSelectedDate] = useState('')
+  const [activeBarbers, setActiveBarbers] = useState([]) 
   const [selectedBarber, setSelectedBarber] = useState(null)
   const [selectedTime, setSelectedTime] = useState('')
   const [customClientName, setCustomClientName] = useState('')
 
   const [existingAppointments, setExistingAppointments] = useState([])
+  const [shopClosures, setShopClosures] = useState([]) 
+  const [barberExceptions, setBarberExceptions] = useState([]) 
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [dateError, setDateError] = useState('')
   const [holidayNotice, setHolidayNotice] = useState('')
@@ -43,7 +45,79 @@ export function BookingView({
   // Data locale in formato YYYY-MM-DD
   const todayString = new Date().toLocaleDateString('sv-SE')
 
-  // Generazione dinamica degli slot orari in base alla configurazione del salone
+  // Caricamento iniziale e sottoscrizione Realtime universale
+  useEffect(() => {
+    fetchShopClosures()
+    fetchBarberExceptions()
+    fetchActiveBarbers()
+
+    // --- CONFIGURAZIONE SUPABASE REALTIME ---
+    // Ascolta in tempo reale modifiche sui barbieri e sulle loro eccezioni/ferie da qualsiasi dispositivo
+    const channel = supabase
+      .channel('public-booking-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'barbers' },
+        () => {
+          fetchActiveBarbers()
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'barber_exceptions' },
+        () => {
+          fetchBarberExceptions()
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'shop_closures' },
+        () => {
+          fetchShopClosures()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [])
+
+  async function fetchShopClosures() {
+    const { data } = await supabase.from('shop_closures').select('*')
+    if (data) setShopClosures(data)
+  }
+
+  async function fetchBarberExceptions() {
+    const { data } = await supabase.from('barber_exceptions').select('*')
+    if (data) setBarberExceptions(data)
+  }
+
+  async function fetchActiveBarbers() {
+    const { data, error } = await supabase
+      .from('barbers')
+      .select('*')
+      .eq('is_active', true)
+    
+    if (data && !error) {
+      setActiveBarbers(data)
+      // Se il barbiere attualmente selezionato viene disattivato in tempo reale, deslezionalo
+      setSelectedBarber(prev => {
+        if (prev && !data.some(b => b.id === prev.id)) {
+          return null
+        }
+        return prev
+      })
+    }
+  }
+
+  const isShopClosedPeriod = (dateStr) => {
+    if (!dateStr) return false
+    return shopClosures.some(closure => {
+      return dateStr >= closure.start_date && dateStr <= closure.end_date
+    })
+  }
+
   const generateTimeSlots = () => {
     const slots = []
     const [startH, startM] = openingTime.split(':').map(Number)
@@ -82,8 +156,10 @@ export function BookingView({
         setSelectedTime(`${hours}:${minutes}`)
       }
 
-      const barber = barbers.find(b => b.id === editingAppointment.barber_id)
-      if (barber) setSelectedBarber(barber)
+      if (activeBarbers.length > 0) {
+        const barber = activeBarbers.find(b => b.id === editingAppointment.barber_id)
+        if (barber) setSelectedBarber(barber)
+      }
 
       setCustomClientName(editingAppointment.custom_client_name || '')
     } else {
@@ -95,7 +171,7 @@ export function BookingView({
       setDateError('')
       setHolidayNotice('')
     }
-  }, [editingAppointment, services, barbers])
+  }, [editingAppointment, services, activeBarbers])
 
   const toggleService = (service) => {
     if (selectedServices.find(s => s.id === service.id)) {
@@ -108,17 +184,15 @@ export function BookingView({
   const totalDuration = selectedServices.reduce((acc, s) => acc + s.duration_minutes, 0)
   const totalPrice = selectedServices.reduce((acc, s) => acc + parseFloat(s.price), 0)
 
-  // Controllo giorni di chiusura dinamico
   const isClosedDay = (dateStr) => {
     if (!dateStr) return false
     const day = new Date(dateStr + 'T00:00:00').getDay()
     return closedDays.includes(day)
   }
 
-  // Controllo Festività
   const isHolidayDate = (dateStr) => {
     if (!dateStr) return false
-    const mmdd = dateStr.slice(5) // prende "MM-DD"
+    const mmdd = dateStr.slice(5)
     return holidays.includes(mmdd)
   }
 
@@ -133,7 +207,14 @@ export function BookingView({
     }
 
     if (isClosedDay(dateVal)) {
-      setDateError('⚠️ Il salone è chiuso nel giorno selezionato. Scegli un\'altra data.')
+      setDateError('⚠️ Il salone è chiuso nel giorno selezionato (giorno di chiusura settimanale).')
+      setSelectedDate('')
+      return
+    }
+
+    if (isShopClosedPeriod(dateVal)) {
+      const closureInfo = shopClosures.find(c => dateVal >= c.start_date && dateVal <= c.end_date)
+      setDateError(`🏖️ Il salone è chiuso per "${closureInfo?.reason || 'Ferie Collettive'}" in questa data.`)
       setSelectedDate('')
       return
     }
@@ -184,6 +265,33 @@ export function BookingView({
     setLoadingSlots(false)
   }
 
+  const isBarberAvailableAtSlot = (slot) => {
+    if (!selectedBarber || !selectedDate) return true
+
+    const exception = barberExceptions.find(
+      exc => exc.barber_id === selectedBarber.id && exc.date === selectedDate
+    )
+
+    if (!exception) return true
+
+    // Se l'eccezione non ha orari, significa che l'operatore è in permesso/ferie per l'intera giornata
+    if (!exception.start_time || !exception.end_time) {
+      return false 
+    }
+
+    const proposedStart = new Date(`${selectedDate}T${slot}:00`)
+    const proposedEnd = new Date(proposedStart.getTime() + totalDuration * 60000)
+
+    const excStart = new Date(`${selectedDate}T${exception.start_time}`)
+    const excEnd = new Date(`${selectedDate}T${exception.end_time}`)
+
+    if (proposedStart < excEnd && proposedEnd > excStart) {
+      return false 
+    }
+
+    return true
+  }
+
   const isSlotAvailable = (slot) => {
     if (!selectedDate || totalDuration === 0) return false
 
@@ -191,6 +299,10 @@ export function BookingView({
     const proposedStart = new Date(`${selectedDate}T${slot}:00`)
 
     if (proposedStart < now) return false
+
+    if (!isBarberAvailableAtSlot(slot)) {
+      return false
+    }
 
     const proposedStartMs = proposedStart.getTime()
     const proposedEndMs = proposedStartMs + totalDuration * 60000
@@ -213,8 +325,38 @@ export function BookingView({
       return
     }
 
+    // --- CONTROLLO DI SICUREZZA FINALE (PREVENZIONE RACE CONDITIONS) ---
+    // Prima di salvare, facciamo un controllo fresco sul DB per verificare che il barbiere sia ancora attivo e non in ferie
+    const { data: freshBarber } = await supabase
+      .from('barbers')
+      .select('is_active')
+      .eq('id', selectedBarber.id)
+      .single()
+
+    if (!freshBarber || !freshBarber.is_active) {
+      alert("Operazione annullata: l'operatore selezionato è stato appena disattivato.")
+      fetchActiveBarbers()
+      setSelectedBarber(null)
+      return
+    }
+
+    const { data: freshExceptions } = await supabase
+      .from('barber_exceptions')
+      .select('*')
+      .eq('barber_id', selectedBarber.id)
+      .eq('date', selectedDate)
+
+    if (freshExceptions && freshExceptions.length > 0) {
+      const hasFullDayOff = freshExceptions.some(exc => !exc.start_time || !exc.end_time)
+      if (hasFullDayOff) {
+        alert("Ops! L'operatore selezionato risulta in permesso/ferie per questa giornata. Impossibile procedere.")
+        fetchBarberExceptions()
+        return
+      }
+    }
+
     if (!isSlotAvailable(selectedTime)) {
-      alert("L'orario selezionato non è disponibile per la durata dei servizi scelti.")
+      alert("L'orario selezionato non è disponibile (operatore assente in permesso o slot occupato).")
       return
     }
 
@@ -312,8 +454,12 @@ export function BookingView({
     }
   }
 
+  const currentBarberFullDayException = activeBarbers && selectedBarber && selectedDate 
+    ? barberExceptions.find(exc => exc.barber_id === selectedBarber.id && exc.date === selectedDate && !exc.start_time)
+    : null
+
   return (
-    <div style={{ position: 'relative', zIndex: 1 }}>
+    <div className="booking-container">
       {editingAppointment && (
         <div style={{ backgroundColor: 'rgba(25, 118, 210, 0.15)', padding: '12px 16px', borderRadius: '8px', marginBottom: '20px', border: '1px solid var(--barber-blue)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontWeight: 'bold', color: 'var(--barber-blue)', fontSize: '0.9rem' }}>
@@ -408,7 +554,7 @@ export function BookingView({
             <>
               <h3 className="section-title">3. Scegli l'Operatore</h3>
               <div style={{ display: 'flex', gap: '10px', marginBottom: '25px' }}>
-                {barbers.map(b => (
+                {activeBarbers.map(b => (
                   <button key={b.id} onClick={() => setSelectedBarber(b)} style={{
                     flex: 1,
                     padding: '12px',
@@ -431,10 +577,15 @@ export function BookingView({
           {selectedBarber && selectedDate && !dateError && (
             <>
               <h3 className="section-title">4. Seleziona Orario</h3>
-              {loadingSlots ? (
+              
+              {currentBarberFullDayException ? (
+                <div style={{ padding: '15px', backgroundColor: 'rgba(211, 47, 47, 0.15)', border: '1px solid var(--barber-red)', borderRadius: '8px', color: '#FF8A80', marginBottom: '25px', fontSize: '14px' }}>
+                  ⚠️ L'operatore selezionato è <strong>assente</strong> in questa data ({currentBarberFullDayException.reason}). Scegli un altro operatore o un'altra data.
+                </div>
+              ) : loadingSlots ? (
                 <p style={{ color: 'var(--text-muted)' }}>Verifica disponibilità orari in corso...</p>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '25px' }}>
+                <div className="time-slots-grid">
                   {allTimeSlots.map(slot => {
                     const available = isSlotAvailable(slot)
                     const isSelected = selectedTime === slot
@@ -444,10 +595,8 @@ export function BookingView({
                         key={slot}
                         disabled={!available}
                         onClick={() => setSelectedTime(slot)}
+                        className={`time-slot-card ${isSelected ? 'selected' : ''}`}
                         style={{
-                          padding: '12px 8px',
-                          borderRadius: '6px',
-                          border: isSelected ? '1px solid var(--barber-red)' : '1px solid var(--border-color)',
                           backgroundColor: !available
                             ? '#1a1a1a'
                             : isSelected
@@ -455,10 +604,7 @@ export function BookingView({
                             : 'rgba(30, 30, 30, 0.8)',
                           color: !available ? '#444' : '#FFF',
                           cursor: !available ? 'not-allowed' : 'pointer',
-                          textDecoration: !available ? 'line-through' : 'none',
-                          fontWeight: isSelected ? 'bold' : '500',
-                          fontSize: '0.9rem',
-                          transition: 'all 0.15s ease'
+                          textDecoration: !available ? 'line-through' : 'none'
                         }}
                       >
                         {slot}
@@ -470,19 +616,20 @@ export function BookingView({
 
               <button 
                 onClick={handleConfirmBooking} 
-                disabled={!selectedTime}
+                disabled={!selectedTime || currentBarberFullDayException}
                 style={{
                   width: '100%',
+                  marginTop: '20px',
                   padding: '14px',
                   borderRadius: '6px',
                   border: 'none',
-                  backgroundColor: !selectedTime ? '#333' : 'var(--barber-red)',
-                  color: !selectedTime ? '#777' : '#FFF',
+                  backgroundColor: (!selectedTime || currentBarberFullDayException) ? '#333' : 'var(--barber-red)',
+                  color: (!selectedTime || currentBarberFullDayException) ? '#777' : '#FFF',
                   fontWeight: 'bold',
                   fontSize: '1rem',
                   letterSpacing: '0.5px',
-                  cursor: !selectedTime ? 'not-allowed' : 'pointer',
-                  boxShadow: !selectedTime ? 'none' : '0 4px 15px rgba(211, 47, 47, 0.4)',
+                  cursor: (!selectedTime || currentBarberFullDayException) ? 'not-allowed' : 'pointer',
+                  boxShadow: (!selectedTime || currentBarberFullDayException) ? 'none' : '0 4px 15px rgba(211, 47, 47, 0.4)',
                   transition: 'all 0.2s ease'
                 }}
               >
@@ -503,7 +650,7 @@ const inputStyle = {
   border: '1px solid var(--border-color)', 
   backgroundColor: 'rgba(24, 24, 24, 0.85)', 
   color: '#FFF', 
-  boxSizing: 'border-box',
+  boxSizing: 'border-box', 
   outline: 'none',
   fontSize: '14px'
 }
