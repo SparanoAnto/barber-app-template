@@ -73,15 +73,21 @@ export default function App() {
       setIsResettingPassword(true)
     }
 
-    // Carica le impostazioni del salone all'avvio
-    fetchSalonSettings()
+    // Inizializzazione sicura: carica prima le impostazioni e poi verifica la sessione
+    async function initApp() {
+      await fetchSalonSettings()
 
-    // 1. Recupero sessione iniziale
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      if (session) fetchProfile(session.user.id)
-      else setLoading(false)
-    })
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        setSession(session)
+        if (session) {
+          fetchProfile(session.user.id)
+        } else {
+          setLoading(false)
+        }
+      })
+    }
+
+    initApp()
 
     // 2. Ascolto dei cambiamenti di stato Auth
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
