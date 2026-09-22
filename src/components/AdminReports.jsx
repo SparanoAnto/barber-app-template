@@ -46,7 +46,7 @@ export function AdminReports({ isOwner = false }) {
           appointment_services (
             service_id,
             price,
-            services ( name, duration_minutes )
+            services ( name, duration_minutes, type ) 
           )
         `)
         .gte('start_time', startOfMonth)
@@ -72,26 +72,39 @@ export function AdminReports({ isOwner = false }) {
       let totalRetailRevenue = 0
       const serviceMap = {}
 
+      // Mappa per tracciare le performance di rivendita per operatore
+      const barberMap = {}
+
       appointments.forEach(app => {
+        const barberName = app.barbers?.name || 'Non Assegnato'
+        const price = parseFloat(app.total_price) || 0
+
+        if (!barberMap[barberName]) {
+          barberMap[barberName] = { total: 0, retailCount: 0, retailTotal: 0 }
+        }
+        barberMap[barberName].total += price
+
         app.appointment_services?.forEach(as => {
           const serviceName = as.services?.name || 'Servizio Generico'
-          const duration = as.services?.duration_minutes ?? 1
+          const serviceType = as.services?.type || 'service'
           const servicePrice = parseFloat(as.price) || 0
+          
+          const isRetail = serviceType === 'product'
 
           if (!serviceMap[serviceName]) {
-            serviceMap[serviceName] = { count: 0, totalRevenue: 0, isRetail: duration === 0 }
+            serviceMap[serviceName] = { count: 0, totalRevenue: 0, isRetail: isRetail }
           }
           serviceMap[serviceName].count += 1
           serviceMap[serviceName].totalRevenue += servicePrice
 
-          if (duration === 0) {
+          if (isRetail) {
             totalRetailRevenue += servicePrice
+            barberMap[barberName].retailCount += 1
+            barberMap[barberName].retailTotal += servicePrice
           }
         })
       })
 
-      // Ordinamento avanzato: prima i servizi normali (isRetail: false), poi rivendite/sconti (isRetail: true). 
-      // A parità di categoria, ordina per incasso totale decrescente.
       const serviceBreakdown = Object.entries(serviceMap)
         .map(([name, data]) => ({ name, ...data }))
         .sort((a, b) => {
@@ -101,21 +114,10 @@ export function AdminReports({ isOwner = false }) {
           return b.totalRevenue - a.totalRevenue
         })
 
-      // 1. Incassi per Operatore
-      const barberMap = {}
-      appointments.forEach(app => {
-        const barberName = app.barbers?.name || 'Non Assegnato'
-        const price = parseFloat(app.total_price) || 0
-        if (!barberMap[barberName]) barberMap[barberName] = { count: 0, total: 0 }
-        barberMap[barberName].count += 1
-        barberMap[barberName].total += price
-      })
-
       const barberRevenue = Object.entries(barberMap)
         .map(([name, data]) => ({
           name,
-          ...data,
-          average: data.count > 0 ? data.total / data.count : 0
+          ...data
         }))
         .sort((a, b) => b.total - a.total)
 
@@ -193,7 +195,7 @@ export function AdminReports({ isOwner = false }) {
           </div>
 
           <div className="info-card">
-            <h3 style={sectionHeaderStyle}>💈 Produttività Operatori</h3>
+            <h3 style={sectionHeaderStyle}>💈 Produttività Operatori & Rivendite</h3>
             {stats.barberRevenue.length === 0 ? (
               <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>Nessun dato per questo mese.</p>
             ) : (
@@ -210,13 +212,13 @@ export function AdminReports({ isOwner = false }) {
                             {isTop && '👑 '} {barber.name}
                           </strong>
                           <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '8px' }}>
-                            ({barber.count} attività | Media: {formatCurrency(barber.average)})
+                            ({barber.retailCount} prodotti venduti | Incasso prodotti: {formatCurrency(barber.retailTotal)})
                           </span>
                         </div>
                         {isOwner ? (
                           <strong style={{ color: '#66BB6A', fontSize: '1.05rem' }}>{formatCurrency(barber.total)}</strong>
                         ) : (
-                          <span style={{ color: '#64B5F6', fontWeight: 'bold', fontSize: '0.9rem' }}>{barber.count} op.</span>
+                          <span style={{ color: '#FFD700', fontWeight: 'bold', fontSize: '0.9rem' }}>{barber.retailCount} prod.</span>
                         )}
                       </div>
                       <div style={{ width: '100%', height: '6px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
@@ -267,7 +269,7 @@ export function AdminReports({ isOwner = false }) {
   )
 }
 
-const inputStyle = { width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'rgba(24, 24, 24, 0.85)', color: '#FFF', fontSize: '14px', outline: 'none', boxSizing: 'box-sizing' }
+const inputStyle = { width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'rgba(24, 24, 24, 0.85)', color: '#FFF', fontSize: '14px', outline: 'none', boxSizing: 'border-box' }
 const statCardStyle = { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '16px 12px' }
 const statIconStyle = { fontSize: '24px', marginBottom: '6px' }
 const statLabelStyle = { fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }

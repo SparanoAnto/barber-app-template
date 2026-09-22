@@ -82,7 +82,7 @@ export function BookingView({
       .from('barbers')
       .select('*')
       .eq('is_active', true)
-      .order('name', { ascending: true }) // <-- Ordinamento alfabetico fisso
+      .order('name', { ascending: true })
 
     if (data && !error) {
       setActiveBarbers(data)
@@ -103,10 +103,23 @@ export function BookingView({
     return shopClosures.some(closure => dateStr >= closure.start_date && dateStr <= closure.end_date)
   }
 
+  // Genera gli slot orari calcolando se l'operatore ha un orario personalizzato per quel giorno
   const generateTimeSlots = () => {
+    let targetOpening = openingTime
+    let targetClosing = closingTime
+
+    if (selectedDate && selectedBarber) {
+      const dayOfWeek = new Date(selectedDate + 'T00:00:00').getDay()
+      const wd = barberWorkingDays.find(w => w.barber_id === selectedBarber.id && w.day_of_week === dayOfWeek)
+      if (wd) {
+        if (wd.start_time) targetOpening = wd.start_time.slice(0, 5)
+        if (wd.end_time) targetClosing = wd.end_time.slice(0, 5)
+      }
+    }
+
     const slots = []
-    const [startH, startM] = openingTime.split(':').map(Number)
-    const [endH, endM] = closingTime.split(':').map(Number)
+    const [startH, startM] = targetOpening.split(':').map(Number)
+    const [endH, endM] = targetClosing.split(':').map(Number)
 
     let current = new Date()
     current.setHours(startH, startM, 0, 0)
@@ -453,13 +466,14 @@ export function BookingView({
         </div>
       )}
 
-      <h3 className="section-title">1. Seleziona Servizi o Prodotti (Rivendita / Sconto)</h3>
+      <h3 className="section-title">1. Seleziona Servizi o Prodotti</h3>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
         {services
           .filter(s => isAdmin || s.is_bookable)
           .map(s => {
             const isSelected = selectedServices.some(item => item.id === s.id)
             const isZeroDuration = s.duration_minutes === 0
+            const isDiscountOrIntegration = s.name.toLowerCase().includes('sconto') || s.name.toLowerCase().includes('integrazione')
 
             return (
               <div key={s.id} style={{
@@ -477,7 +491,7 @@ export function BookingView({
                   <div>
                     <strong style={{ fontSize: '1rem', color: '#ffffff' }}>{s.name}</strong>
                     <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                      {isZeroDuration ? '📦 Prodotto / Extra (Senza durata)' : `⏱ ${s.duration_minutes} min`}
+                      {isZeroDuration && !isDiscountOrIntegration ? '📦 Prodotto / Extra (Senza durata)' : isZeroDuration ? '' : `⏱ ${s.duration_minutes} min`}
                     </div>
                   </div>
                   <div style={{ color: 'var(--barber-red)', fontWeight: '800', fontSize: '1.1rem' }}>
@@ -486,17 +500,21 @@ export function BookingView({
                 </div>
 
                 {isSelected && isZeroDuration && isAdmin && (
-                  <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '10px', background: 'rgba(0,0,0,0.3)', padding: '8px', borderRadius: '6px' }}>
+                  <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '10px', background: 'rgba(0,0,0,0.3)', padding: '8px', borderRadius: '6px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: '12px', color: '#FFD700', fontWeight: 'bold' }}>Inserisci Importo (€):</span>
                     <input
                       type="number"
                       step="0.05"
-                      placeholder="Es: 10 o -5"
+                      placeholder="Es: 10"
                       value={customServicePrices[s.id] !== undefined ? customServicePrices[s.id] : s.price}
                       onChange={(e) => handleCustomPriceChange(s.id, e.target.value)}
                       style={{ ...inputStyle, padding: '6px 10px', width: '120px', backgroundColor: '#111', color: '#FFD700', fontWeight: 'bold' }}
                     />
-                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>(Usa segno negativo es. -5 per sconti)</span>
+                    {isDiscountOrIntegration && (
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        (Usa segno negativo es. -5 per sconti)
+                      </span>
+                    )}
                   </div>
                 )}
               </div>

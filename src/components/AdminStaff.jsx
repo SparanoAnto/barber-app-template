@@ -1,32 +1,38 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 
+// Cache globale temporanea per evitare il caricamento a ogni cambio di tab
+let cachedStaffData = {
+  barbers: [],
+  workingDays: [],
+  exceptions: [],
+  closures: [],
+  loaded: false
+}
+
 export function AdminStaff() {
-  const [barbers, setBarbers] = useState([])
+  const [barbers, setBarbers] = useState(cachedStaffData.barbers)
   const [selectedBarber, setSelectedBarber] = useState('')
   const [exceptionDate, setExceptionDate] = useState('')
   const [excStartTime, setExcStartTime] = useState('')
   const [excEndTime, setExcEndTime] = useState('')
   const [exceptionReason, setExceptionReason] = useState('')
-  const [exceptions, setExceptions] = useState([])
+  const [exceptions, setExceptions] = useState(cachedStaffData.exceptions)
   
   const [newBarberName, setNewBarberName] = useState('')
-  const [closures, setClosures] = useState([])
+  const [closures, setClosures] = useState(cachedStaffData.closures)
   const [closureStartDate, setClosureStartDate] = useState('')
   const [closureEndDate, setClosureEndDate] = useState('')
   const [closureReason, setClosureReason] = useState('')
 
-  // Stato per i giorni lavorativi dei barbieri (es. [{ barber_id, day_of_week }])
-  const [workingDays, setWorkingDays] = useState([])
-  
-  // Stato locale temporaneo per la modifica della data di fine rapporto per ogni barbiere
+  const [workingDays, setWorkingDays] = useState(cachedStaffData.workingDays)
   const [terminationDates, setTerminationDates] = useState({})
-
-  const [loading, setLoading] = useState(true)
+  
+  // Se abbiamo già i dati in cache, partiamo con loading = false per zero sfarfallii
+  const [loading, setLoading] = useState(!cachedStaffData.loaded)
 
   const todayString = new Date().toLocaleDateString('sv-SE')
 
-  // Giorni della settimana standard (0 = Domenica, 1 = Lunedì, ecc.)
   const DAYS_OF_WEEK = [
     { id: 1, label: 'Lun' },
     { id: 2, label: 'Mar' },
@@ -38,7 +44,8 @@ export function AdminStaff() {
   ]
 
   useEffect(() => {
-    fetchData(true)
+    // Se non abbiamo i dati in cache, facciamo il fetch con il loader, altrimenti aggiorniamo in background in modo invisibile
+    fetchData(!cachedStaffData.loaded)
 
     const channel = supabase
       .channel('admin-staff-changes')
@@ -53,10 +60,9 @@ export function AdminStaff() {
     }
   }, [])
 
-  async function fetchData(isInitial = false) {
-    if (isInitial) setLoading(true)
+  async function fetchData(showLoader = false) {
+    if (showLoader) setLoading(true)
     
-    // Ordinamento alfabetico fisso per gli operatori
     const { data: bData } = await supabase
       .from('barbers')
       .select('*')
@@ -64,7 +70,7 @@ export function AdminStaff() {
 
     if (bData) {
       setBarbers(bData)
-      // Inizializza le date di fine rapporto nello stato locale se non già presenti
+      cachedStaffData.barbers = bData
       setTerminationDates(prev => {
         const termMap = { ...prev }
         bData.forEach(b => {
@@ -77,23 +83,33 @@ export function AdminStaff() {
     }
 
     const { data: wdData } = await supabase.from('barber_working_days').select('*')
-    if (wdData) setWorkingDays(wdData)
+    if (wdData) {
+      setWorkingDays(wdData)
+      cachedStaffData.workingDays = wdData
+    }
 
     const { data: eData } = await supabase
       .from('barber_exceptions')
       .select('*, barbers(name)')
       .gte('date', todayString)
       .order('date', { ascending: true })
-    if (eData) setExceptions(eData)
+    if (eData) {
+      setExceptions(eData)
+      cachedStaffData.exceptions = eData
+    }
 
     const { data: cData } = await supabase
       .from('shop_closures')
       .select('*')
       .gte('end_date', todayString)
       .order('start_date', { ascending: true })
-    if (cData) setClosures(cData)
+    if (cData) {
+      setClosures(cData)
+      cachedStaffData.closures = cData
+    }
 
-    if (isInitial) setLoading(false)
+    cachedStaffData.loaded = true
+    if (showLoader) setLoading(false)
   }
 
   async function handleAddBarber(e) {
@@ -126,7 +142,6 @@ export function AdminStaff() {
     if (!error) fetchData(false)
   }
 
-  // Aggiorna o salva la data di fine rapporto (gestisce anche la cancellazione impostandola a null)
   async function handleSaveTerminationDate(barberId) {
     const rawVal = terminationDates[barberId]
     const termDate = rawVal && rawVal.trim() !== '' ? rawVal : null
@@ -144,12 +159,10 @@ export function AdminStaff() {
     }
   }
 
-  // Gestione dei giorni lavorativi ricorrenti (Toggle checkbox)
   async function handleToggleWorkingDay(barberId, dayOfWeek) {
     const exists = workingDays.some(wd => wd.barber_id === barberId && wd.day_of_week === dayOfWeek)
 
     if (exists) {
-      // Rimuovi il giorno
       const { error } = await supabase
         .from('barber_working_days')
         .delete()
@@ -158,13 +171,22 @@ export function AdminStaff() {
 
       if (!error) fetchData(false)
     } else {
-      // Aggiungi il giorno
       const { error } = await supabase
         .from('barber_working_days')
-        .insert([{ barber_id: barberId, day_of_week: dayOfWeek }])
+        .insert([{ barber_id: barberId, day_of_week: dayOfWeek, start_time: null, end_time: null }])
 
       if (!error) fetchData(false)
     }
+  }
+
+  async function handleUpdateWorkingDayTime(barberId, dayOfWeek, field, value) {
+    const { error } = await supabase
+      .from('barber_working_days')
+      .update({ [field]: value ? value : null })
+      .eq('barber_id', barberId)
+      .eq('day_of_week', dayOfWeek)
+
+    if (!error) fetchData(false)
   }
 
   async function handleAddClosure(e) {
@@ -247,10 +269,10 @@ export function AdminStaff() {
 
       <div className="admin-staff-responsive-grid">
         
-        {/* COLONNA SINISTRA: Inserimenti (Chiusure, Staff, Permessi) */}
+        {/* COLONNA SINISTRA */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
           
-          {/* 1. SEZIONE CHIUSURA COLLETTIVA SALONE */}
+          {/* Chiusura Collettiva */}
           <div className="info-card" style={{ marginBottom: 0, borderColor: '#64B5F6' }}>
             <h4 style={{ color: '#64B5F6', marginTop: 0, marginBottom: '15px' }}>🏖️ Chiusura Collettiva / Ferie Salone</h4>
             <form onSubmit={handleAddClosure} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -286,7 +308,7 @@ export function AdminStaff() {
             )}
           </div>
 
-          {/* 2. SEZIONE AGGIUNGI NUOVO OPERATORE */}
+          {/* Aggiungi Operatore */}
           <div className="info-card" style={{ marginBottom: 0 }}>
             <h4 style={{ color: '#FFF', marginTop: 0, marginBottom: '15px' }}>➕ Aggiungi Nuovo Operatore</h4>
             <form onSubmit={handleAddBarber} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -300,7 +322,7 @@ export function AdminStaff() {
             </form>
           </div>
 
-          {/* 3. SEZIONE PROGRAMMA ASSENZA SINGOLO OPERATORE */}
+          {/* Programma Assenza Singolo */}
           <div className="info-card" style={{ marginBottom: 0 }}>
             <h4 style={{ color: '#FFF', marginTop: 0, marginBottom: '15px' }}>📅 Programma Assenza o Permesso Singolo</h4>
             <form onSubmit={handleAddException} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -343,25 +365,23 @@ export function AdminStaff() {
 
         </div>
 
-        {/* COLONNA DESTRA: Gestione Avanzata Operatori & Assenze */}
+        {/* COLONNA DESTRA */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
           
-          {/* Lista Stato Operatori, Giorni Lavorativi e Uscita Programmata */}
+          {/* Configurazione Operatori & Orari Giornalieri */}
           <div className="info-card" style={{ marginBottom: 0 }}>
             <h4 style={{ color: '#FFF', marginBottom: '15px', marginTop: 0 }}>⚙️ Configurazione Operatori (Orari & Uscite)</h4>
-            {loading ? (
+            {loading && barbers.length === 0 ? (
               <p style={{ color: 'var(--text-muted)' }}>Caricamento...</p>
             ) : barbers.length === 0 ? (
               <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Nessun operatore registrato.</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                 {barbers.map(b => {
-                  const barberDays = workingDays.filter(wd => wd.barber_id === b.id).map(wd => wd.day_of_week)
-
                   return (
                     <div key={b.id} style={{ padding: '14px', borderRadius: '8px', backgroundColor: 'rgba(0, 0, 0, 0.3)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       
-                      {/* Intestazione operatore e tasto attivo/disattivo */}
+                      {/* Intestazione */}
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                           <strong style={{ color: '#FFF', fontSize: '1.05rem' }}>{b.name}</strong>
@@ -374,36 +394,59 @@ export function AdminStaff() {
                         </button>
                       </div>
 
-                      {/* Giorni lavorativi ricorrenti */}
+                      {/* Giorni lavorativi e orari specifici */}
                       <div>
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Giorni lavorativi settimanali (seleziona i giorni attivi):</span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Giorni lavorativi e orari dedicati (opzionali):</span>
                         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                           {DAYS_OF_WEEK.map(day => {
-                            const isWorking = barberDays.includes(day.id)
+                            const wdObj = workingDays.find(wd => wd.barber_id === b.id && wd.day_of_week === day.id)
+                            const isWorking = !!wdObj
+
                             return (
-                              <button
-                                key={day.id}
-                                type="button"
-                                onClick={() => handleToggleWorkingDay(b.id, day.id)}
-                                style={{
-                                  padding: '6px 10px',
-                                  borderRadius: '4px',
-                                  fontSize: '11px',
-                                  fontWeight: 'bold',
-                                  cursor: 'pointer',
-                                  border: isWorking ? '1px solid #64B5F6' : '1px solid var(--border-color)',
-                                  backgroundColor: isWorking ? 'rgba(25, 118, 210, 0.3)' : 'rgba(20, 20, 20, 0.6)',
-                                  color: isWorking ? '#FFF' : '#777'
-                                }}
-                              >
-                                {day.label}
-                              </button>
+                              <div key={day.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '5px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px', border: '1px solid var(--border-color)', minWidth: '65px', alignItems: 'center' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleWorkingDay(b.id, day.id)}
+                                  style={{
+                                    padding: '3px 6px',
+                                    borderRadius: '4px',
+                                    fontSize: '11px',
+                                    fontWeight: 'bold',
+                                    cursor: 'pointer',
+                                    border: isWorking ? '1px solid #64B5F6' : '1px solid var(--border-color)',
+                                    backgroundColor: isWorking ? 'rgba(25, 118, 210, 0.3)' : 'rgba(20, 20, 20, 0.6)',
+                                    color: isWorking ? '#FFF' : '#777',
+                                    width: '100%'
+                                  }}
+                                >
+                                  {day.label} {isWorking ? '✓' : ''}
+                                </button>
+
+                                {isWorking && (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', width: '100%' }}>
+                                    <input 
+                                      type="time" 
+                                      value={wdObj.start_time || ''} 
+                                      onChange={(e) => handleUpdateWorkingDayTime(b.id, day.id, 'start_time', e.target.value)}
+                                      title="Inizio (lascia vuoto per default salone)"
+                                      style={{ ...inputStyle, padding: '2px', fontSize: '9px', height: '20px', textAlign: 'center', width: '100%' }} 
+                                    />
+                                    <input 
+                                      type="time" 
+                                      value={wdObj.end_time || ''} 
+                                      onChange={(e) => handleUpdateWorkingDayTime(b.id, day.id, 'end_time', e.target.value)}
+                                      title="Fine (lascia vuoto per default salone)"
+                                      style={{ ...inputStyle, padding: '2px', fontSize: '9px', height: '20px', textAlign: 'center', width: '100%' }} 
+                                    />
+                                  </div>
+                                )}
+                              </div>
                             )
                           })}
                         </div>
                       </div>
 
-                      {/* Data fine rapporto con pulsante di reset rapido "✕" */}
+                      {/* Data fine rapporto */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
                         <div style={{ flex: 1 }}>
                           <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '2px' }}>Data Uscita / Fine Rapporto (Opzionale):</label>
@@ -445,7 +488,7 @@ export function AdminStaff() {
           {/* Lista Assenze Future */}
           <div>
             <h4 style={{ color: '#FFF', marginBottom: '10px', marginTop: 0 }}>Assenze Individuali Programmate</h4>
-            {loading ? (
+            {loading && exceptions.length === 0 ? (
               <p style={{ color: 'var(--text-muted)' }}>Caricamento...</p>
             ) : exceptions.length === 0 ? (
               <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Nessuna assenza futura.</p>
