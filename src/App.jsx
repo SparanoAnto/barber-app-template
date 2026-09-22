@@ -209,15 +209,11 @@ export default function App() {
     setActiveTab('appointments')
   }
 
+  // Schermata di caricamento pulita (senza flash di testi grezzi)
   if (loading) {
     return (
-      <div className="app-container" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-        <h1 className="brand-title" style={{ fontSize: '2.4rem', textAlign: 'center' }}>
-          {salonSettings.salon_name}
-        </h1>
-        <span className="brand-subtitle" style={{ fontSize: '2rem' }}>
-          {salonSettings.salon_subtitle || 'Barber Shop'}
-        </span>
+      <div className="app-container" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#0f0f0f' }}>
+        <div style={{ fontSize: '3rem' }}>💈</div>
       </div>
     )
   }
