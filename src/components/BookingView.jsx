@@ -29,8 +29,11 @@ export function BookingView({
   holidays = DEFAULT_HOLIDAYS
 }) {
   const [selectedServices, setSelectedServices] = useState([])
+  const [customServicePrices, setCustomServicePrices] = useState({})
+
   const [selectedDate, setSelectedDate] = useState('')
   const [activeBarbers, setActiveBarbers] = useState([]) 
+  const [barberWorkingDays, setBarberWorkingDays] = useState([])
   const [selectedBarber, setSelectedBarber] = useState(null)
   const [selectedTime, setSelectedTime] = useState('')
   const [customClientName, setCustomClientName] = useState('')
@@ -45,37 +48,18 @@ export function BookingView({
   // Data locale in formato YYYY-MM-DD
   const todayString = new Date().toLocaleDateString('sv-SE')
 
-  // Caricamento iniziale e sottoscrizione Realtime universale
   useEffect(() => {
     fetchShopClosures()
     fetchBarberExceptions()
     fetchActiveBarbers()
+    fetchBarberWorkingDays()
 
-    // --- CONFIGURAZIONE SUPABASE REALTIME ---
-    // Ascolta in tempo reale modifiche sui barbieri e sulle loro eccezioni/ferie da qualsiasi dispositivo
     const channel = supabase
       .channel('public-booking-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'barbers' },
-        () => {
-          fetchActiveBarbers()
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'barber_exceptions' },
-        () => {
-          fetchBarberExceptions()
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'shop_closures' },
-        () => {
-          fetchShopClosures()
-        }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'barbers' }, () => fetchActiveBarbers())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'barber_exceptions' }, () => fetchBarberExceptions())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shop_closures' }, () => fetchShopClosures())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'barber_working_days' }, () => fetchBarberWorkingDays())
       .subscribe()
 
     return () => {
@@ -98,24 +82,25 @@ export function BookingView({
       .from('barbers')
       .select('*')
       .eq('is_active', true)
-    
+      .order('name', { ascending: true }) // <-- Ordinamento alfabetico fisso
+
     if (data && !error) {
       setActiveBarbers(data)
-      // Se il barbiere attualmente selezionato viene disattivato in tempo reale, deslezionalo
       setSelectedBarber(prev => {
-        if (prev && !data.some(b => b.id === prev.id)) {
-          return null
-        }
+        if (prev && !data.some(b => b.id === prev.id)) return null
         return prev
       })
     }
   }
 
+  async function fetchBarberWorkingDays() {
+    const { data } = await supabase.from('barber_working_days').select('*')
+    if (data) setBarberWorkingDays(data)
+  }
+
   const isShopClosedPeriod = (dateStr) => {
     if (!dateStr) return false
-    return shopClosures.some(closure => {
-      return dateStr >= closure.start_date && dateStr <= closure.end_date
-    })
+    return shopClosures.some(closure => dateStr >= closure.start_date && dateStr <= closure.end_date)
   }
 
   const generateTimeSlots = () => {
@@ -125,7 +110,6 @@ export function BookingView({
 
     let current = new Date()
     current.setHours(startH, startM, 0, 0)
-
     const end = new Date()
     end.setHours(endH, endM, 0, 0)
 
@@ -135,7 +119,6 @@ export function BookingView({
       slots.push(`${hours}:${minutes}`)
       current.setMinutes(current.getMinutes() + slotIntervalMinutes)
     }
-
     return slots
   }
 
@@ -146,6 +129,15 @@ export function BookingView({
       const currentServiceIds = editingAppointment.appointment_services?.map(as => as.service_id || as.services?.id)
       const initialServices = services.filter(s => currentServiceIds?.includes(s.id))
       setSelectedServices(initialServices)
+
+      const pricesMap = {}
+      editingAppointment.appointment_services?.forEach(as => {
+        const sId = as.service_id || as.services?.id
+        if (as.price !== undefined) {
+          pricesMap[sId] = String(as.price)
+        }
+      })
+      setCustomServicePrices(pricesMap)
 
       if (editingAppointment.start_time) {
         const dt = new Date(editingAppointment.start_time)
@@ -164,6 +156,7 @@ export function BookingView({
       setCustomClientName(editingAppointment.custom_client_name || '')
     } else {
       setSelectedServices([])
+      setCustomServicePrices({})
       setSelectedDate('')
       setSelectedBarber(null)
       setSelectedTime('')
@@ -174,15 +167,32 @@ export function BookingView({
   }, [editingAppointment, services, activeBarbers])
 
   const toggleService = (service) => {
-    if (selectedServices.find(s => s.id === service.id)) {
+    const exists = selectedServices.find(s => s.id === service.id)
+    if (exists) {
       setSelectedServices(selectedServices.filter(s => s.id !== service.id))
     } else {
       setSelectedServices([...selectedServices, service])
+      if (service.duration_minutes === 0 && !customServicePrices[service.id]) {
+        setCustomServicePrices(prev => ({ ...prev, [service.id]: String(service.price || 0) }))
+      }
     }
   }
 
+  const handleCustomPriceChange = (serviceId, value) => {
+    setCustomServicePrices(prev => ({
+      ...prev,
+      [serviceId]: value
+    }))
+  }
+
   const totalDuration = selectedServices.reduce((acc, s) => acc + s.duration_minutes, 0)
-  const totalPrice = selectedServices.reduce((acc, s) => acc + parseFloat(s.price), 0)
+  
+  const totalPrice = selectedServices.reduce((acc, s) => {
+    const priceToUse = (s.duration_minutes === 0 && customServicePrices[s.id] !== undefined && customServicePrices[s.id] !== '')
+      ? parseFloat(customServicePrices[s.id])
+      : parseFloat(s.price)
+    return acc + (isNaN(priceToUse) ? 0 : priceToUse)
+  }, 0)
 
   const isClosedDay = (dateStr) => {
     if (!dateStr) return false
@@ -192,14 +202,14 @@ export function BookingView({
 
   const isHolidayDate = (dateStr) => {
     if (!dateStr) return false
-    const mmdd = dateStr.slice(5)
-    return holidays.includes(mmdd)
+    return holidays.includes(dateStr.slice(5))
   }
 
   const handleDateChange = (dateVal) => {
     setDateError('')
     setHolidayNotice('')
     setSelectedTime('')
+    setSelectedBarber(null)
 
     if (!dateVal) {
       setSelectedDate('')
@@ -226,6 +236,26 @@ export function BookingView({
     }
   }
 
+  const getAvailableBarbersForDate = (dateStr) => {
+    if (!dateStr) return activeBarbers
+
+    const dayOfWeek = new Date(dateStr + 'T00:00:00').getDay()
+
+    return activeBarbers.filter(barber => {
+      if (barber.termination_date && dateStr > barber.termination_date) {
+        return false 
+      }
+
+      const barberDays = barberWorkingDays.filter(wd => wd.barber_id === barber.id)
+      if (barberDays.length > 0) {
+        const worksOnThisDay = barberDays.some(wd => wd.day_of_week === dayOfWeek)
+        if (!worksOnThisDay) return false
+      }
+
+      return true
+    })
+  }
+
   useEffect(() => {
     if (selectedDate && selectedBarber) {
       fetchExistingAppointments()
@@ -236,7 +266,6 @@ export function BookingView({
 
   async function fetchExistingAppointments() {
     setLoadingSlots(true)
-    
     const startOfDay = new Date(`${selectedDate}T00:00:00`)
     const endOfDay = new Date(`${selectedDate}T23:59:59`)
 
@@ -255,67 +284,44 @@ export function BookingView({
       query = query.neq('id', editingAppointment.id)
     }
 
-    const { data, error } = await query
-
-    if (error) {
-      console.error('Errore recupero appuntamenti:', error.message)
-    } else {
-      setExistingAppointments(data || [])
-    }
+    const { data } = await query
+    setExistingAppointments(data || [])
     setLoadingSlots(false)
   }
 
   const isBarberAvailableAtSlot = (slot) => {
     if (!selectedBarber || !selectedDate) return true
-
-    const exception = barberExceptions.find(
-      exc => exc.barber_id === selectedBarber.id && exc.date === selectedDate
-    )
-
+    const exception = barberExceptions.find(exc => exc.barber_id === selectedBarber.id && exc.date === selectedDate)
     if (!exception) return true
-
-    // Se l'eccezione non ha orari, significa che l'operatore è in permesso/ferie per l'intera giornata
-    if (!exception.start_time || !exception.end_time) {
-      return false 
-    }
+    if (!exception.start_time || !exception.end_time) return false 
 
     const proposedStart = new Date(`${selectedDate}T${slot}:00`)
-    const proposedEnd = new Date(proposedStart.getTime() + totalDuration * 60000)
+    const effectiveDuration = totalDuration === 0 ? 30 : totalDuration
+    const proposedEnd = new Date(proposedStart.getTime() + effectiveDuration * 60000)
 
     const excStart = new Date(`${selectedDate}T${exception.start_time}`)
     const excEnd = new Date(`${selectedDate}T${exception.end_time}`)
 
-    if (proposedStart < excEnd && proposedEnd > excStart) {
-      return false 
-    }
-
+    if (proposedStart < excEnd && proposedEnd > excStart) return false 
     return true
   }
 
   const isSlotAvailable = (slot) => {
-    if (!selectedDate || totalDuration === 0) return false
-
+    if (!selectedDate) return false
     const now = new Date()
     const proposedStart = new Date(`${selectedDate}T${slot}:00`)
-
     if (proposedStart < now) return false
+    if (!isBarberAvailableAtSlot(slot)) return false
 
-    if (!isBarberAvailableAtSlot(slot)) {
-      return false
-    }
-
+    const effectiveDuration = totalDuration === 0 ? 30 : totalDuration
     const proposedStartMs = proposedStart.getTime()
-    const proposedEndMs = proposedStartMs + totalDuration * 60000
+    const proposedEndMs = proposedStartMs + effectiveDuration * 60000
 
     for (const app of existingAppointments) {
       const existingStart = new Date(app.start_time).getTime()
       const existingEnd = new Date(app.end_time).getTime()
-
-      if (proposedStartMs < existingEnd && proposedEndMs > existingStart) {
-        return false
-      }
+      if (proposedStartMs < existingEnd && proposedEndMs > existingStart) return false
     }
-
     return true
   }
 
@@ -325,43 +331,9 @@ export function BookingView({
       return
     }
 
-    // --- CONTROLLO DI SICUREZZA FINALE (PREVENZIONE RACE CONDITIONS) ---
-    // Prima di salvare, facciamo un controllo fresco sul DB per verificare che il barbiere sia ancora attivo e non in ferie
-    const { data: freshBarber } = await supabase
-      .from('barbers')
-      .select('is_active')
-      .eq('id', selectedBarber.id)
-      .single()
-
-    if (!freshBarber || !freshBarber.is_active) {
-      alert("Operazione annullata: l'operatore selezionato è stato appena disattivato.")
-      fetchActiveBarbers()
-      setSelectedBarber(null)
-      return
-    }
-
-    const { data: freshExceptions } = await supabase
-      .from('barber_exceptions')
-      .select('*')
-      .eq('barber_id', selectedBarber.id)
-      .eq('date', selectedDate)
-
-    if (freshExceptions && freshExceptions.length > 0) {
-      const hasFullDayOff = freshExceptions.some(exc => !exc.start_time || !exc.end_time)
-      if (hasFullDayOff) {
-        alert("Ops! L'operatore selezionato risulta in permesso/ferie per questa giornata. Impossibile procedere.")
-        fetchBarberExceptions()
-        return
-      }
-    }
-
-    if (!isSlotAvailable(selectedTime)) {
-      alert("L'orario selezionato non è disponibile (operatore assente in permesso o slot occupato).")
-      return
-    }
-
     const startDateTime = new Date(`${selectedDate}T${selectedTime}:00`)
-    const endDateTime = new Date(startDateTime.getTime() + totalDuration * 60000)
+    const effectiveDuration = totalDuration === 0 ? slotIntervalMinutes : totalDuration
+    const endDateTime = new Date(startDateTime.getTime() + effectiveDuration * 60000)
 
     try {
       if (editingAppointment && editingAppointment.id) {
@@ -372,37 +344,37 @@ export function BookingView({
           total_price: totalPrice
         }
 
-        if (isAdmin) {
-          if (customClientName.trim() !== '') {
-            updatePayload.custom_client_name = customClientName.trim()
-          } else if (editingAppointment.custom_client_name) {
-            updatePayload.custom_client_name = editingAppointment.custom_client_name
-          }
+        if (isAdmin && customClientName.trim() !== '') {
+          updatePayload.custom_client_name = customClientName.trim()
         }
 
         const { error: updateError } = await supabase
           .from('appointments')
           .update(updatePayload)
           .eq('id', editingAppointment.id)
-
         if (updateError) throw updateError
 
         const { error: delError } = await supabase
           .from('appointment_services')
           .delete()
           .eq('appointment_id', editingAppointment.id)
-
         if (delError) throw delError
 
-        const joins = selectedServices.map(s => ({
-          appointment_id: editingAppointment.id,
-          service_id: s.id
-        }))
+        const joins = selectedServices.map(s => {
+          const finalPrice = (s.duration_minutes === 0 && customServicePrices[s.id] !== undefined && customServicePrices[s.id] !== '')
+            ? parseFloat(customServicePrices[s.id])
+            : parseFloat(s.price)
+
+          return {
+            appointment_id: editingAppointment.id,
+            service_id: s.id,
+            price: finalPrice 
+          }
+        })
 
         const { error: insertServiceError } = await supabase
           .from('appointment_services')
           .insert(joins)
-
         if (insertServiceError) throw insertServiceError
 
         alert("Appuntamento modificato con successo!")
@@ -425,38 +397,33 @@ export function BookingView({
           .insert([newAppointment])
           .select()
           .single()
-
         if (appError) throw appError
 
-        const joins = selectedServices.map(s => ({
-          appointment_id: appData.id,
-          service_id: s.id
-        }))
+        const joins = selectedServices.map(s => {
+          const finalPrice = (s.duration_minutes === 0 && customServicePrices[s.id] !== undefined && customServicePrices[s.id] !== '')
+            ? parseFloat(customServicePrices[s.id])
+            : parseFloat(s.price)
+
+          return {
+            appointment_id: appData.id,
+            service_id: s.id,
+            price: finalPrice
+          }
+        })
 
         const { error: joinError } = await supabase
           .from('appointment_services')
           .insert(joins)
-
         if (joinError) throw joinError
 
-        alert("Nuova prenotazione confermata con successo!")
+        alert("Nuova prenotazione registrata con successo!")
       }
 
       if (onBookingSuccess) onBookingSuccess()
     } catch (err) {
-      if (err.message && err.message.includes('no_overlapping_appointments')) {
-        alert("Ops! Quest'orario è stato appena prenotato da un altro cliente. Scegli un altro orario.")
-        setSelectedTime('')
-        fetchExistingAppointments()
-      } else {
-        alert("Errore salvataggio: " + err.message)
-      }
+      alert("Errore salvataggio: " + err.message)
     }
   }
-
-  const currentBarberFullDayException = activeBarbers && selectedBarber && selectedDate 
-    ? barberExceptions.find(exc => exc.barber_id === selectedBarber.id && exc.date === selectedDate && !exc.start_time)
-    : null
 
   return (
     <div className="booking-container">
@@ -465,10 +432,7 @@ export function BookingView({
           <span style={{ fontWeight: 'bold', color: 'var(--barber-blue)', fontSize: '0.9rem' }}>
             ✏️ Modifica dell'appuntamento esistente
           </span>
-          <button 
-            onClick={onCancelEdit} 
-            style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '13px', textDecoration: 'underline' }}
-          >
+          <button onClick={onCancelEdit} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '13px', textDecoration: 'underline' }}>
             Annulla Modifica
           </button>
         </div>
@@ -477,11 +441,11 @@ export function BookingView({
       {isAdmin && (
         <div className="info-card" style={{ marginBottom: '20px', borderColor: 'var(--barber-blue)' }}>
           <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#64B5F6', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            👑 Prenotazione per conto di un cliente (Opzionale):
+            👑 Prenotazione / Vendita per conto di un cliente (Opzionale):
           </label>
           <input
             type="text"
-            placeholder="Es: Mario Rossi (Telefonata)"
+            placeholder="Es: Mario Rossi (Rivendita / Telefono)"
             value={customClientName}
             onChange={(e) => setCustomClientName(e.target.value)}
             style={{ ...inputStyle, backgroundColor: 'rgba(15, 15, 15, 0.9)', border: '1px solid var(--border-color)' }}
@@ -489,87 +453,94 @@ export function BookingView({
         </div>
       )}
 
-      <h3 className="section-title">1. Seleziona Servizi</h3>
+      <h3 className="section-title">1. Seleziona Servizi o Prodotti (Rivendita / Sconto)</h3>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
-        {services.map(s => {
-          const isSelected = selectedServices.some(item => item.id === s.id)
-          return (
-            <div key={s.id} onClick={() => toggleService(s)} style={{
-              padding: '14px 16px',
-              borderRadius: '8px',
-              border: isSelected ? '1px solid var(--barber-red)' : '1px solid var(--border-color)',
-              backgroundColor: isSelected ? 'rgba(211, 47, 47, 0.15)' : 'rgba(24, 24, 24, 0.85)',
-              cursor: 'pointer',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              boxShadow: isSelected ? '0 0 12px rgba(211, 47, 47, 0.2)' : 'none',
-              transition: 'all 0.2s ease'
-            }}>
-              <div>
-                <strong style={{ fontSize: '1rem', color: '#ffffff' }}>{s.name}</strong>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>⏱ {s.duration_minutes} min</div>
+        {services
+          .filter(s => isAdmin || s.is_bookable)
+          .map(s => {
+            const isSelected = selectedServices.some(item => item.id === s.id)
+            const isZeroDuration = s.duration_minutes === 0
+
+            return (
+              <div key={s.id} style={{
+                padding: '14px 16px',
+                borderRadius: '8px',
+                border: isSelected ? '1px solid var(--barber-red)' : '1px solid var(--border-color)',
+                backgroundColor: isSelected ? 'rgba(211, 47, 47, 0.15)' : 'rgba(24, 24, 24, 0.85)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                boxShadow: isSelected ? '0 0 12px rgba(211, 47, 47, 0.2)' : 'none',
+                transition: 'all 0.2s ease'
+              }}>
+                <div onClick={() => toggleService(s)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
+                  <div>
+                    <strong style={{ fontSize: '1rem', color: '#ffffff' }}>{s.name}</strong>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      {isZeroDuration ? '📦 Prodotto / Extra (Senza durata)' : `⏱ ${s.duration_minutes} min`}
+                    </div>
+                  </div>
+                  <div style={{ color: 'var(--barber-red)', fontWeight: '800', fontSize: '1.1rem' }}>
+                    {!isZeroDuration && `€${parseFloat(s.price).toFixed(2)}`}
+                  </div>
+                </div>
+
+                {isSelected && isZeroDuration && isAdmin && (
+                  <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '10px', background: 'rgba(0,0,0,0.3)', padding: '8px', borderRadius: '6px' }}>
+                    <span style={{ fontSize: '12px', color: '#FFD700', fontWeight: 'bold' }}>Inserisci Importo (€):</span>
+                    <input
+                      type="number"
+                      step="0.05"
+                      placeholder="Es: 10 o -5"
+                      value={customServicePrices[s.id] !== undefined ? customServicePrices[s.id] : s.price}
+                      onChange={(e) => handleCustomPriceChange(s.id, e.target.value)}
+                      style={{ ...inputStyle, padding: '6px 10px', width: '120px', backgroundColor: '#111', color: '#FFD700', fontWeight: 'bold' }}
+                    />
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>(Usa segno negativo es. -5 per sconti)</span>
+                  </div>
+                )}
               </div>
-              <div style={{ color: 'var(--barber-red)', fontWeight: '800', fontSize: '1.1rem' }}>€{parseFloat(s.price).toFixed(2)}</div>
-            </div>
-          )
-        })}
+            )
+          })}
       </div>
 
       {selectedServices.length > 0 && (
         <>
           <div style={{ padding: '12px 16px', background: 'rgba(30, 30, 30, 0.9)', borderLeft: '4px solid var(--barber-red)', borderRadius: '6px', marginBottom: '25px' }}>
-            <strong style={{ color: '#FFF' }}>Riepilogo: {totalDuration} min | €{totalPrice.toFixed(2)}</strong>
+            <strong style={{ color: '#FFF' }}>Riepilogo: {totalDuration > 0 ? `${totalDuration} min` : 'Solo Prodotti/Extra'} | Totale: €{totalPrice.toFixed(2)}</strong>
           </div>
 
           <h3 className="section-title">2. Scegli la Data</h3>
-          
           <div style={{ marginBottom: '25px' }}>
             <input 
               type="date" 
               min={todayString}
               value={selectedDate} 
               onChange={e => handleDateChange(e.target.value)} 
-              style={{ 
-                ...inputStyle, 
-                border: holidayNotice ? '1px solid #FFD700' : dateError ? '1px solid var(--barber-red)' : '1px solid var(--border-color)',
-                backgroundColor: holidayNotice ? 'rgba(255, 215, 0, 0.08)' : 'rgba(24, 24, 24, 0.85)'
-              }} 
+              style={{ ...inputStyle, border: holidayNotice ? '1px solid #FFD700' : dateError ? '1px solid var(--barber-red)' : '1px solid var(--border-color)' }} 
             />
-
-            {dateError && (
-              <div style={{ marginTop: '10px', padding: '10px 12px', backgroundColor: 'rgba(211, 47, 47, 0.2)', border: '1px solid var(--barber-red)', borderRadius: '6px', color: '#FF8A80', fontSize: '13px', fontWeight: '600' }}>
-                {dateError}
-              </div>
-            )}
-
-            {holidayNotice && (
-              <div style={{ marginTop: '10px', padding: '10px 12px', backgroundColor: 'rgba(255, 215, 0, 0.15)', border: '1px solid #FFD700', borderRadius: '6px', color: '#FFD700', fontSize: '13px', fontWeight: '600' }}>
-                {holidayNotice}
-              </div>
-            )}
+            {dateError && <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(211,47,47,0.2)', color: '#FF8A80', borderRadius: '6px', fontSize: '13px' }}>{dateError}</div>}
+            {holidayNotice && <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(255,215,0,0.15)', color: '#FFD700', borderRadius: '6px', fontSize: '13px' }}>{holidayNotice}</div>}
           </div>
 
           {selectedDate && !dateError && (
             <>
               <h3 className="section-title">3. Scegli l'Operatore</h3>
-              <div style={{ display: 'flex', gap: '10px', marginBottom: '25px' }}>
-                {activeBarbers.map(b => (
-                  <button key={b.id} onClick={() => setSelectedBarber(b)} style={{
-                    flex: 1,
-                    padding: '12px',
-                    borderRadius: '8px',
-                    border: selectedBarber?.id === b.id ? '2px solid var(--barber-blue)' : '1px solid var(--border-color)',
-                    backgroundColor: selectedBarber?.id === b.id ? 'rgba(25, 118, 210, 0.2)' : 'rgba(24, 24, 24, 0.85)',
-                    color: '#FFF',
-                    cursor: 'pointer',
-                    fontWeight: 'bold',
-                    fontSize: '0.9rem',
-                    transition: 'all 0.2s ease'
-                  }}>
-                    💈 {b.name}
-                  </button>
-                ))}
+              <div style={{ display: 'flex', gap: '10px', marginBottom: '25px', flexWrap: 'wrap' }}>
+                {getAvailableBarbersForDate(selectedDate).length === 0 ? (
+                  <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Nessun operatore disponibile in questa data.</p>
+                ) : (
+                  getAvailableBarbersForDate(selectedDate).map(b => (
+                    <button key={b.id} onClick={() => setSelectedBarber(b)} style={{
+                      flex: 1, minWidth: '120px', padding: '12px', borderRadius: '8px',
+                      border: selectedBarber?.id === b.id ? '2px solid var(--barber-blue)' : '1px solid var(--border-color)',
+                      backgroundColor: selectedBarber?.id === b.id ? 'rgba(25, 118, 210, 0.2)' : 'rgba(24, 24, 24, 0.85)',
+                      color: '#FFF', cursor: 'pointer', fontWeight: 'bold'
+                    }}>
+                      💈 {b.name}
+                    </button>
+                  ))
+                )}
               </div>
             </>
           )}
@@ -577,34 +548,18 @@ export function BookingView({
           {selectedBarber && selectedDate && !dateError && (
             <>
               <h3 className="section-title">4. Seleziona Orario</h3>
-              
-              {currentBarberFullDayException ? (
-                <div style={{ padding: '15px', backgroundColor: 'rgba(211, 47, 47, 0.15)', border: '1px solid var(--barber-red)', borderRadius: '8px', color: '#FF8A80', marginBottom: '25px', fontSize: '14px' }}>
-                  ⚠️ L'operatore selezionato è <strong>assente</strong> in questa data ({currentBarberFullDayException.reason}). Scegli un altro operatore o un'altra data.
-                </div>
-              ) : loadingSlots ? (
-                <p style={{ color: 'var(--text-muted)' }}>Verifica disponibilità orari in corso...</p>
-              ) : (
+              {loadingSlots ? <p style={{ color: 'var(--text-muted)' }}>Caricamento slot...</p> : (
                 <div className="time-slots-grid">
                   {allTimeSlots.map(slot => {
                     const available = isSlotAvailable(slot)
                     const isSelected = selectedTime === slot
-
                     return (
                       <button
-                        key={slot}
-                        disabled={!available}
-                        onClick={() => setSelectedTime(slot)}
+                        key={slot} disabled={!available} onClick={() => setSelectedTime(slot)}
                         className={`time-slot-card ${isSelected ? 'selected' : ''}`}
                         style={{
-                          backgroundColor: !available
-                            ? '#1a1a1a'
-                            : isSelected
-                            ? 'var(--barber-red)'
-                            : 'rgba(30, 30, 30, 0.8)',
-                          color: !available ? '#444' : '#FFF',
-                          cursor: !available ? 'not-allowed' : 'pointer',
-                          textDecoration: !available ? 'line-through' : 'none'
+                          backgroundColor: !available ? '#1a1a1a' : isSelected ? 'var(--barber-red)' : 'rgba(30, 30, 30, 0.8)',
+                          color: !available ? '#444' : '#FFF', cursor: !available ? 'not-allowed' : 'pointer'
                         }}
                       >
                         {slot}
@@ -614,26 +569,11 @@ export function BookingView({
                 </div>
               )}
 
-              <button 
-                onClick={handleConfirmBooking} 
-                disabled={!selectedTime || currentBarberFullDayException}
-                style={{
-                  width: '100%',
-                  marginTop: '20px',
-                  padding: '14px',
-                  borderRadius: '6px',
-                  border: 'none',
-                  backgroundColor: (!selectedTime || currentBarberFullDayException) ? '#333' : 'var(--barber-red)',
-                  color: (!selectedTime || currentBarberFullDayException) ? '#777' : '#FFF',
-                  fontWeight: 'bold',
-                  fontSize: '1rem',
-                  letterSpacing: '0.5px',
-                  cursor: (!selectedTime || currentBarberFullDayException) ? 'not-allowed' : 'pointer',
-                  boxShadow: (!selectedTime || currentBarberFullDayException) ? 'none' : '0 4px 15px rgba(211, 47, 47, 0.4)',
-                  transition: 'all 0.2s ease'
-                }}
-              >
-                {editingAppointment ? "Salva Modifiche Appuntamento" : "Conferma Nuova Prenotazione"}
+              <button onClick={handleConfirmBooking} disabled={!selectedTime} style={{
+                width: '100%', marginTop: '20px', padding: '14px', borderRadius: '6px', border: 'none',
+                backgroundColor: !selectedTime ? '#333' : 'var(--barber-red)', color: !selectedTime ? '#777' : '#FFF', fontWeight: 'bold', cursor: !selectedTime ? 'not-allowed' : 'pointer'
+              }}>
+                {editingAppointment ? "Salva Modifiche" : "Conferma Registrazione"}
               </button>
             </>
           )}
@@ -651,6 +591,7 @@ const inputStyle = {
   backgroundColor: 'rgba(24, 24, 24, 0.85)', 
   color: '#FFF', 
   boxSizing: 'border-box', 
-  outline: 'none',
-  fontSize: '14px'
+  outline: 'none', 
+  fontSize: '14px',
+  colorScheme: 'dark' 
 }

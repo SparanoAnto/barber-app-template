@@ -8,7 +8,7 @@ export function AppointmentsView({ userId, isAdmin, onEditAppointment }) {
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState(null)
   
-  // Inizializzazione della data corrente nel formato locale YYYY-MM-DD (Svezia usa la ISO YYYY-MM-DD)
+  // Inizializzazione della data corrente nel formato locale YYYY-MM-DD
   const [selectedDate, setSelectedDate] = useState(new Date().toLocaleDateString('sv-SE'))
 
   useEffect(() => {
@@ -205,10 +205,14 @@ export function AppointmentsView({ userId, isAdmin, onEditAppointment }) {
           const { canModify, canCancel, reason } = checkAppointmentPermissions(item.start_time)
           const isPast = new Date(item.start_time) <= new Date()
 
-          const serviceList = item.appointment_services
-            ?.map((as) => as.services?.name)
+          // Separiamo e ordiniamo i servizi: prima quelli principali (durata > 0), poi rivendite/extra (durata 0)
+          const sortedServices = item.appointment_services
+            ?.map((as) => as.services)
             .filter(Boolean)
-            .join(', ') || 'Servizio Generico'
+            .sort((a, b) => (b.duration_minutes || 0) - (a.duration_minutes || 0)) || []
+
+          const mainService = sortedServices[0]?.name || 'Servizio Generico'
+          const secondaryServices = sortedServices.slice(1).map(s => s.name).join(', ')
 
           const clientName = item.custom_client_name 
             ? item.custom_client_name 
@@ -236,9 +240,16 @@ export function AppointmentsView({ userId, isAdmin, onEditAppointment }) {
               )}
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                <span style={{ fontWeight: 'bold', fontSize: '1.05rem', color: '#ffffff' }}>
-                  {serviceList}
-                </span>
+                <div>
+                  <span style={{ fontWeight: 'bold', fontSize: '1.05rem', color: '#ffffff', display: 'block' }}>
+                    {mainService}
+                  </span>
+                  {secondaryServices && (
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic', display: 'block', marginTop: '2px' }}>
+                      + {secondaryServices}
+                    </span>
+                  )}
+                </div>
                 <span style={{ color: 'var(--barber-red)', fontWeight: 'bold', fontSize: '1.1rem' }}>
                   {item.total_price ? `€${parseFloat(item.total_price).toFixed(2)}` : ''}
                 </span>
@@ -320,5 +331,6 @@ const filterInputStyle = {
   color: '#FFF',
   boxSizing: 'border-box',
   outline: 'none',
-  fontSize: '13px'
+  fontSize: '13px',
+  colorScheme: 'dark'
 }
