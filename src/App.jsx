@@ -123,7 +123,6 @@ export default function App() {
       if (data && !error) {
         setSalonSettings(prev => {
           const updated = { ...prev, ...data }
-          // Salva in localStorage così al prossimo refresh il nome è istantaneo
           localStorage.setItem('salon_settings', JSON.stringify(updated))
           return updated
         })
@@ -256,7 +255,7 @@ export default function App() {
       <div className="app-container" style={{ padding: '30px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
         <InstallGuideModal />
         <div className="info-card" style={{ maxWidth: '400px', width: '100%', textAlign: 'center' }}>
-          <h2 style={{ color: 'var(--barber-red)', margin: '0 0 10px 0'>>, Account in Attesa</h2>
+          <h2 style={{ color: 'var(--barber-red)', margin: '0 0 10px 0' }}>Account in Attesa</h2>
           <p style={{ color: 'var(--text-muted)', lineHeight: '1.5' }}>
             Ciao <strong>{profile.first_name}</strong>, la tua registrazione è attiva. Un amministratore deve convalidare il tuo account prima che tu possa prenotare.
           </p>
@@ -511,7 +510,7 @@ export default function App() {
             {adminSubTab === 'approvals' && (
               <div>
                 <h3 className="section-title">Pannello Approvazioni</h3>
-                <AdminApprovals onApprovalChange={fetchPendingCount} />
+                <AdminApprovals onApprovalCountChange={fetchPendingCount} />
               </div>
             )}
 
