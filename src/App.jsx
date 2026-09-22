@@ -16,17 +16,27 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('services')
 
-  // Stato per le impostazioni dinamiche del salone
-  const [salonSettings, setSalonSettings] = useState({
-    salon_name: 'Barber Shop',
-    salon_subtitle: 'Barber Shop',
-    address: '',
-    phone: '',
-    closed_day: 'Domenica e Lunedì',
-    opening_time: '08:30',
-    closing_time: '20:00',
-    slot_interval_minutes: 30,
-    closed_days: [0, 1] // [Domenica, Lunedì]
+  // Inizializza lo stato leggendo subito da localStorage (se disponibile) per evitare il flash
+  const [salonSettings, setSalonSettings] = useState(() => {
+    const cachedSettings = localStorage.getItem('salon_settings')
+    if (cachedSettings) {
+      try {
+        return JSON.parse(cachedSettings)
+      } catch (e) {
+        // Se c'è un errore di parsing, usa i valori di default
+      }
+    }
+    return {
+      salon_name: 'Barber Shop',
+      salon_subtitle: 'Barber Shop',
+      address: '',
+      phone: '',
+      closed_day: 'Domenica e Lunedì',
+      opening_time: '08:30',
+      closing_time: '20:00',
+      slot_interval_minutes: 30,
+      closed_days: [0, 1]
+    }
   })
 
   // Mappatura da stringa ad array di indici JS per i giorni di chiusura
@@ -47,25 +57,17 @@ export default function App() {
     return map[closedDayText] || [0, 1]
   }
 
-  // Stato per il reset password da link email
   const [isResettingPassword, setIsResettingPassword] = useState(false)
-
-  // Stati per il cambio password nel profilo
   const [showPasswordForm, setShowPasswordForm] = useState(false)
   const [newPassword, setNewPassword] = useState('')
   const [pwdLoading, setPwdLoading] = useState(false)
   const [pwdMessage, setPwdMessage] = useState({ type: '', text: '' })
-
-  // Sub-tab Admin (impostata di default su 'approvals')
   const [adminSubTab, setAdminSubTab] = useState('approvals')
-
   const [services, setServices] = useState([])
   const [pendingCount, setPendingCount] = useState(0)
-
   const [editingAppointment, setEditingAppointment] = useState(null)
 
   useEffect(() => {
-    // 🔍 CONTROLLO URL: Attiva il Reset Password SOLO se type=recovery
     const hash = window.location.hash
     const search = window.location.search
 
@@ -73,7 +75,6 @@ export default function App() {
       setIsResettingPassword(true)
     }
 
-    // Inizializzazione sicura: carica prima le impostazioni e poi verifica la sessione
     async function initApp() {
       await fetchSalonSettings()
 
@@ -89,7 +90,6 @@ export default function App() {
 
     initApp()
 
-    // 2. Ascolto dei cambiamenti di stato Auth
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session)
 
@@ -121,7 +121,12 @@ export default function App() {
     try {
       const { data, error } = await supabase.from('settings').select('*').limit(1).single()
       if (data && !error) {
-        setSalonSettings(prev => ({ ...prev, ...data }))
+        setSalonSettings(prev => {
+          const updated = { ...prev, ...data }
+          // Salva in localStorage così al prossimo refresh il nome è istantaneo
+          localStorage.setItem('salon_settings', JSON.stringify(updated))
+          return updated
+        })
         document.title = data.salon_name || 'Barber Shop'
       }
     } catch (err) {
@@ -150,7 +155,6 @@ export default function App() {
   }
 
   async function loadSaloneData() {
-    // Carichiamo solo i servizi necessari a livello globale; i barbieri sono gestiti da BookingView
     const { data: sData } = await supabase.from('services').select('*')
     if (sData) setServices(sData)
   }
@@ -215,7 +219,6 @@ export default function App() {
     setActiveTab('appointments')
   }
 
-  // Schermata di caricamento pulita (senza flash di testi grezzi)
   if (loading) {
     return (
       <div className="app-container" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#0f0f0f' }}>
@@ -224,7 +227,6 @@ export default function App() {
     )
   }
 
-  // Reset Password da email (SOLO per type=recovery)
   if (isResettingPassword) {
     return (
       <Auth 
@@ -239,7 +241,6 @@ export default function App() {
     )
   }
 
-  // Se non autenticato, mostra il form di Auth con il nome, il logo e i settings dinamici
   if (!session) {
     return (
       <Auth 
@@ -250,13 +251,12 @@ export default function App() {
     )
   }
 
-  // Se in attesa di approvazione admin
   if (profile && !profile.is_approved && profile.role !== 'admin') {
     return (
       <div className="app-container" style={{ padding: '30px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
         <InstallGuideModal />
         <div className="info-card" style={{ maxWidth: '400px', width: '100%', textAlign: 'center' }}>
-          <h2 style={{ color: 'var(--barber-red)', margin: '0 0 10px 0' }}>Account in Attesa</h2>
+          <h2 style={{ color: 'var(--barber-red)', margin: '0 0 10px 0'>>, Account in Attesa</h2>
           <p style={{ color: 'var(--text-muted)', lineHeight: '1.5' }}>
             Ciao <strong>{profile.first_name}</strong>, la tua registrazione è attiva. Un amministratore deve convalidare il tuo account prima che tu possa prenotare.
           </p>
@@ -291,8 +291,6 @@ export default function App() {
             editingAppointment={editingAppointment}
             onBookingSuccess={handleBookingSuccess}
             onCancelEdit={() => setEditingAppointment(null)}
-            
-            /* --- INIEZIONE IMPOSTAZIONI DINAMICHE DA SUPABASE --- */
             openingTime={salonSettings.opening_time || '08:30'}
             closingTime={salonSettings.closing_time || '20:00'}
             slotIntervalMinutes={salonSettings.slot_interval_minutes || 30}
