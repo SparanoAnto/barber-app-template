@@ -7,6 +7,7 @@ import { AdminApprovals } from './components/AdminApprovals'
 import { AppointmentsView } from './components/AppointmentsView'
 import { AdminReports } from './components/AdminReports'
 import { AdminStaff } from './components/AdminStaff'
+import { AdminServices } from './components/AdminServices'
 import { InstallGuideModal } from './components/InstallGuideModal'
 import './App.css'
 
@@ -62,6 +63,15 @@ export default function App() {
   const [newPassword, setNewPassword] = useState('')
   const [pwdLoading, setPwdLoading] = useState(false)
   const [pwdMessage, setPwdMessage] = useState({ type: '', text: '' })
+
+  // Stati per la modifica del profilo (Nome, Cognome, Telefono)
+  const [showProfileForm, setShowProfileForm] = useState(false)
+  const [editFirstName, setEditFirstName] = useState('')
+  const [editLastName, setEditLastName] = useState('')
+  const [editPhone, setEditPhone] = useState('')
+  const [profileLoading, setProfileLoading] = useState(false)
+  const [profileMessage, setProfileMessage] = useState({ type: '', text: '' })
+
   const [adminSubTab, setAdminSubTab] = useState('approvals')
   const [services, setServices] = useState([])
   const [pendingCount, setPendingCount] = useState(0)
@@ -159,6 +169,11 @@ export default function App() {
     try {
       const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
       setProfile(data)
+      if (data) {
+        setEditFirstName(data.first_name || '')
+        setEditLastName(data.last_name || '')
+        setEditPhone(data.phone || '')
+      }
     } catch (err) {
       console.error(err.message)
     } finally {
@@ -200,6 +215,47 @@ export default function App() {
       setTimeout(() => setShowPasswordForm(false), 2000)
     }
     setPwdLoading(false)
+  }
+
+  async function handleUpdateProfile(e) {
+    e.preventDefault()
+    setProfileMessage({ type: '', text: '' })
+
+    if (!editFirstName.trim() || !editLastName.trim()) {
+      setProfileMessage({ type: 'error', text: 'Nome e Cognome sono obbligatori.' })
+      return
+    }
+
+    setProfileLoading(true)
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          first_name: editFirstName.trim(),
+          last_name: editLastName.trim(),
+          phone: editPhone.trim()
+        })
+        .eq('id', session.user.id)
+
+      if (error) throw error
+
+      setProfileMessage({ type: 'success', text: 'Informazioni aggiornate con successo!' })
+      // Aggiorna lo stato locale del profilo
+      setProfile(prev => ({
+        ...prev,
+        first_name: editFirstName.trim(),
+        last_name: editLastName.trim(),
+        phone: editPhone.trim()
+      }))
+      setTimeout(() => {
+        setShowProfileForm(false)
+        setProfileMessage({ type: '', text: '' })
+      }, 1500)
+    } catch (err) {
+      setProfileMessage({ type: 'error', text: err.message })
+    } finally {
+      setProfileLoading(false)
+    }
   }
 
   async function handleDeleteAccount() {
@@ -344,9 +400,112 @@ export default function App() {
           <div>
             <h3 className="section-title">Il Tuo Profilo</h3>
             <div className="info-card">
-              <p style={{ margin: '10px 0' }}><strong>Nome:</strong> {profile?.first_name} {profile?.last_name}</p>
-              <p style={{ margin: '10px 0' }}><strong>Email:</strong> {profile?.email}</p>
-              <p style={{ margin: '10px 0' }}><strong>Telefono:</strong> {profile?.phone}</p>
+              {!showProfileForm ? (
+                <div>
+                  <p style={{ margin: '10px 0' }}><strong>Nome:</strong> {profile?.first_name} {profile?.last_name}</p>
+                  <p style={{ margin: '10px 0' }}><strong>Email:</strong> {profile?.email}</p>
+                  <p style={{ margin: '10px 0' }}><strong>Telefono:</strong> {profile?.phone || 'Non specificato'}</p>
+                  
+                  <button 
+                    onClick={() => {
+                      setEditFirstName(profile?.first_name || '')
+                      setEditLastName(profile?.last_name || '')
+                      setEditPhone(profile?.phone || '')
+                      setShowProfileForm(true)
+                      setProfileMessage({ type: '', text: '' })
+                    }}
+                    style={{
+                      width: '100%',
+                      marginTop: '15px',
+                      padding: '10px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color)',
+                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                      color: '#FFF',
+                      fontWeight: 'bold',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ✏️ Modifica Dati Personali
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <h4 style={{ color: '#FFF', margin: 0 }}>Modifica Profilo</h4>
+                    <span 
+                      onClick={() => {
+                        setShowProfileForm(false)
+                        setProfileMessage({ type: '', text: '' })
+                      }}
+                      style={{ color: 'var(--text-muted)', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' }}
+                    >
+                      Annulla
+                    </span>
+                  </div>
+
+                  {profileMessage.text && (
+                    <div style={{
+                      padding: '10px',
+                      borderRadius: '6px',
+                      marginBottom: '10px',
+                      fontSize: '13px',
+                      backgroundColor: profileMessage.type === 'error' ? 'rgba(211, 47, 47, 0.2)' : 'rgba(46, 125, 50, 0.2)',
+                      border: profileMessage.type === 'error' ? '1px solid var(--barber-red)' : '1px solid #2e7d32',
+                      color: profileMessage.type === 'error' ? '#FFF' : '#81c784'
+                    }}>
+                      {profileMessage.text}
+                    </div>
+                  )}
+
+                  <form onSubmit={handleUpdateProfile} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div>
+                      <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Nome</label>
+                      <input 
+                        type="text" 
+                        value={editFirstName} 
+                        onChange={e => setEditFirstName(e.target.value)}
+                        style={profileInputStyle}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Cognome</label>
+                      <input 
+                        type="text" 
+                        value={editLastName} 
+                        onChange={e => setEditLastName(e.target.value)}
+                        style={profileInputStyle}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Telefono</label>
+                      <input 
+                        type="tel" 
+                        value={editPhone} 
+                        onChange={e => setEditPhone(e.target.value)}
+                        style={profileInputStyle}
+                      />
+                    </div>
+
+                    <button 
+                      type="submit" 
+                      disabled={profileLoading}
+                      style={{
+                        padding: '10px',
+                        borderRadius: '6px',
+                        border: 'none',
+                        backgroundColor: 'var(--barber-blue)',
+                        color: '#FFF',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        marginTop: '5px'
+                      }}
+                    >
+                      {profileLoading ? 'Salvataggio...' : 'Salva Modifiche'}
+                    </button>
+                  </form>
+                </div>
+              )}
               
               <hr style={{ border: '0', borderTop: '1px solid var(--border-color)', margin: '20px 0' }} />
 
@@ -405,17 +564,7 @@ export default function App() {
                       placeholder="Nuova Password" 
                       value={newPassword} 
                       onChange={e => setNewPassword(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '10px 12px',
-                        borderRadius: '6px',
-                        border: '1px solid var(--border-color)',
-                        backgroundColor: 'rgba(15, 15, 15, 0.8)',
-                        color: '#FFF',
-                        boxSizing: 'border-box',
-                        fontSize: '14px',
-                        outline: 'none'
-                      }}
+                      style={profileInputStyle}
                     />
                     <button 
                       type="submit" 
@@ -475,14 +624,14 @@ export default function App() {
                 onClick={() => setAdminSubTab('approvals')}
                 style={{
                   flex: 1,
-                  minWidth: '100px',
-                  padding: '10px 8px',
+                  minWidth: '90px',
+                  padding: '10px 6px',
                   borderRadius: '8px',
                   border: adminSubTab === 'approvals' ? '1px solid var(--barber-red)' : '1px solid var(--border-color)',
                   backgroundColor: adminSubTab === 'approvals' ? 'var(--barber-red)' : 'rgba(24, 24, 24, 0.85)',
                   color: '#FFF',
                   fontWeight: 'bold',
-                  fontSize: '0.8rem',
+                  fontSize: '0.75rem',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease'
                 }}
@@ -491,17 +640,36 @@ export default function App() {
               </button>
 
               <button
+                onClick={() => setAdminSubTab('services')}
+                style={{
+                  flex: 1,
+                  minWidth: '90px',
+                  padding: '10px 6px',
+                  borderRadius: '8px',
+                  border: adminSubTab === 'services' ? '1px solid var(--barber-red)' : '1px solid var(--border-color)',
+                  backgroundColor: adminSubTab === 'services' ? 'var(--barber-red)' : 'rgba(24, 24, 24, 0.85)',
+                  color: '#FFF',
+                  fontWeight: 'bold',
+                  fontSize: '0.75rem',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                🏷️ Servizi
+              </button>
+
+              <button
                 onClick={() => setAdminSubTab('staff')}
                 style={{
                   flex: 1,
-                  minWidth: '100px',
-                  padding: '10px 8px',
+                  minWidth: '90px',
+                  padding: '10px 6px',
                   borderRadius: '8px',
                   border: adminSubTab === 'staff' ? '1px solid var(--barber-red)' : '1px solid var(--border-color)',
                   backgroundColor: adminSubTab === 'staff' ? 'var(--barber-red)' : 'rgba(24, 24, 24, 0.85)',
                   color: '#FFF',
                   fontWeight: 'bold',
-                  fontSize: '0.8rem',
+                  fontSize: '0.75rem',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease'
                 }}
@@ -513,14 +681,14 @@ export default function App() {
                 onClick={() => setAdminSubTab('reports')}
                 style={{
                   flex: 1,
-                  minWidth: '100px',
-                  padding: '10px 8px',
+                  minWidth: '90px',
+                  padding: '10px 6px',
                   borderRadius: '8px',
                   border: adminSubTab === 'reports' ? '1px solid var(--barber-red)' : '1px solid var(--border-color)',
                   backgroundColor: adminSubTab === 'reports' ? 'var(--barber-red)' : 'rgba(24, 24, 24, 0.85)',
                   color: '#FFF',
                   fontWeight: 'bold',
-                  fontSize: '0.8rem',
+                  fontSize: '0.75rem',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease'
                 }}
@@ -534,6 +702,10 @@ export default function App() {
                 <h3 className="section-title">Pannello Approvazioni</h3>
                 <AdminApprovals onApprovalCountChange={fetchPendingCount} />
               </div>
+            )}
+
+            {adminSubTab === 'services' && (
+              <AdminServices />
             )}
 
             {adminSubTab === 'staff' && (
@@ -555,4 +727,16 @@ export default function App() {
       />
     </div>
   )
+}
+
+const profileInputStyle = {
+  width: '100%',
+  padding: '10px 12px',
+  borderRadius: '6px',
+  border: '1px solid var(--border-color)',
+  backgroundColor: 'rgba(15, 15, 15, 0.8)',
+  color: '#FFF',
+  boxSizing: 'border-box',
+  fontSize: '14px',
+  outline: 'none'
 }
