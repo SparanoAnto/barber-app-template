@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 
 export function Auth({ 
-  appName = "App Prenotazioni", 
-  appLogo = "💈", 
+  appName = "App Salone", 
+  appLogo = "✨", 
   salonSettings = {},
   isResettingPasswordProps = false, 
   onPasswordUpdated 
@@ -33,13 +33,45 @@ export function Auth({
     setIsResettingPassword(isResettingPasswordProps)
   }, [isResettingPasswordProps])
 
+  /**
+   * Helper per tradurre in modo chiaro i messaggi di errore di Supabase in italiano
+   */
+  function translateAuthError(message) {
+    if (!message) return "Si è verificato un errore imprevisto."
+    const lowerMsg = message.toLowerCase()
+
+    if (lowerMsg.includes('invalid login credentials') || lowerMsg.includes('invalid grant')) {
+      return "Email o password non corretti. Verifica i dati inseriti o registrati se non hai un account."
+    }
+    if (lowerMsg.includes('email not confirmed')) {
+      return "Account non ancora attivato. Controlla la tua casella di posta e conferma l'email."
+    }
+    if (lowerMsg.includes('user already registered') || lowerMsg.includes('already registered')) {
+      return "Esiste già un account registrato con questa email. Prova ad accedere."
+    }
+    if (lowerMsg.includes('password should be at least')) {
+      return "La password è troppo corta: deve contenere almeno 6 caratteri."
+    }
+    if (lowerMsg.includes('rate limit') || lowerMsg.includes('over_email_send_rate_limit')) {
+      return "Hai effettuato troppe richieste in poco tempo. Riprova tra qualche minuto."
+    }
+    if (lowerMsg.includes('invalid email')) {
+      return "L'indirizzo email inserito non è valido."
+    }
+
+    return message // Fallback al messaggio originale se non mappato
+  }
+
   async function handleLogin(e) {
     e.preventDefault()
     setAuthError('')
     setAuthSuccess('')
     setLoading(true)
+
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) setAuthError(error.message)
+    if (error) {
+      setAuthError(translateAuthError(error.message))
+    }
     setLoading(false)
   }
 
@@ -50,15 +82,14 @@ export function Auth({
     setLoading(true)
 
     const siteUrl = window.location.origin
-
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: siteUrl,
     })
 
     if (error) {
-      setAuthError(error.message)
+      setAuthError(translateAuthError(error.message))
     } else {
-      setAuthSuccess('Ti abbiamo inviato un\'email con il link per reimpostare la password!')
+      setAuthSuccess('Ti abbiamo inviato un\'email con il link sicuro per reimpostare la password.')
     }
     setLoading(false)
   }
@@ -72,7 +103,7 @@ export function Auth({
     const { error } = await supabase.auth.updateUser({ password: newPassword })
     
     if (error) {
-      setAuthError(error.message)
+      setAuthError(translateAuthError(error.message))
     } else {
       alert('Password aggiornata con successo!')
       setIsResettingPassword(false)
@@ -95,8 +126,7 @@ export function Auth({
 
     try {
       const siteUrl = window.location.origin
-
-      const { data: authData, error: signUpError } = await supabase.auth.signUp({
+      const { error: signUpError } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -112,10 +142,10 @@ export function Auth({
 
       if (signUpError) throw signUpError
 
-      alert("Registrazione effettuata! Conferma l'email per attivare il tuo account.")
+      alert("Registrazione completata! Controlla la tua email per confermare l'account prima di accedere.")
       setIsRegistering(false)
     } catch (err) {
-      setAuthError(err.message)
+      setAuthError(translateAuthError(err.message))
     } finally {
       setLoading(false)
     }
@@ -127,20 +157,20 @@ export function Auth({
         <div className="info-card">
           <h2 style={{ textAlign: 'center', color: '#FFFFFF', marginTop: '10px' }}>Nuova Password</h2>
           <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '14px', marginBottom: '15px' }}>
-            Inserisci la tua nuova password per il tuo account.
+            Inserisci la nuova password per il tuo account.
           </p>
           {authError && <div style={errorBoxStyle}>{authError}</div>}
           <form onSubmit={handleUpdatePassword} style={formStyle}>
             <input 
               type="password" 
-              placeholder="Nuova Password" 
+              placeholder="Nuova Password (min. 6 caratteri)" 
               value={newPassword} 
               onChange={e => setNewPassword(e.target.value)} 
               required 
               style={inputStyle} 
             />
             <button type="submit" disabled={loading} style={btnPrimaryStyle}>
-              {loading ? 'Salvataggio...' : 'Salva Nuova Password'}
+              {loading ? 'Salvataggio in corso...' : 'Salva Nuova Password'}
             </button>
           </form>
         </div>
@@ -154,7 +184,7 @@ export function Auth({
         <div className="info-card">
           <h2 style={{ textAlign: 'center', color: '#FFFFFF', marginTop: '10px' }}>Recupera Password</h2>
           <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '14px', marginBottom: '15px' }}>
-            Inserisci la tua email. Ti invieremo un link per reimpostare la password.
+            Inserisci la tua email. Ti invieremo le istruzioni per il recupero.
           </p>
           {authError && <div style={errorBoxStyle}>{authError}</div>}
           {authSuccess && <div style={successBoxStyle}>{authSuccess}</div>}
@@ -162,7 +192,7 @@ export function Auth({
           <form onSubmit={handleForgotPassword} style={formStyle}>
             <input 
               type="email" 
-              placeholder="Email" 
+              placeholder="La tua email" 
               value={email} 
               onChange={e => setEmail(e.target.value)} 
               required 
@@ -183,10 +213,10 @@ export function Auth({
   return (
     <div className="app-container" style={{ padding: '30px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
       
-      {/* Brand Header Universale & Dinamico */}
+      {/* Brand Header Universale Dinamico (Senza icone fisse da barbiere) */}
       <div style={{ textAlign: 'center', marginBottom: '25px', position: 'relative', zIndex: 1 }}>
         
-        {/* 1. Scritta Filigrana Gigante sullo Sfondo */}
+        {/* Filigrana di sfondo */}
         <div style={{
           position: 'absolute',
           top: '-35px',
@@ -204,7 +234,7 @@ export function Auth({
           {appName}
         </div>
 
-        {/* 2. Titolo Principale Dinamico (con apice 'th' automatico se presente nel nome) */}
+        {/* Titolo principale */}
         <h1 className="brand-title" style={{ 
           fontSize: '2.2rem', 
           fontWeight: '900', 
@@ -225,24 +255,26 @@ export function Auth({
           )}
         </h1>
 
-        {/* 3. Sottotitolo Dinamico dal Database */}
+        {/* Sottotitolo dinamico */}
         <span className="brand-subtitle" style={{ 
           display: 'block', 
-          fontSize: '2.2rem', 
-          marginTop: '-4px',
-          fontWeight: 'normal'
+          fontSize: '1.2rem', 
+          marginTop: '6px',
+          color: 'var(--text-muted)',
+          fontWeight: 'normal',
+          letterSpacing: '0.5px'
         }}>
-          {salonSettings?.salon_subtitle || 'Barber Shop'}
+          {salonSettings?.salon_subtitle || 'Portale di Prenotazione'}
         </span>
 
       </div>
 
-      <div className="info-card" style={{ position: 'relative', zIndex: 1 }}>
+      <div className="info-card" style={{ position: 'relative', zIndex: '1' }}>
         {authError && <div style={errorBoxStyle}>{authError}</div>}
 
         {!isRegistering ? (
           <form onSubmit={handleLogin} style={formStyle}>
-            <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required style={inputStyle} />
+            <input type="email" placeholder="Indirizzo Email" value={email} onChange={e => setEmail(e.target.value)} required style={inputStyle} />
             <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={inputStyle} />
             
             <div style={{ textAlign: 'right', marginTop: '-5px' }}>
@@ -267,8 +299,8 @@ export function Auth({
             <input type="text" placeholder="Cognome" value={lastName} onChange={e => setLastName(e.target.value)} required style={inputStyle} />
             <input type="number" placeholder="Età" value={age} onChange={e => setAge(e.target.value)} required style={inputStyle} />
             <input type="tel" placeholder="Cellulare" value={phone} onChange={e => setPhone(e.target.value)} required style={inputStyle} />
-            <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required style={inputStyle} />
-            <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={inputStyle} />
+            <input type="email" placeholder="Indirizzo Email" value={email} onChange={e => setEmail(e.target.value)} required style={inputStyle} />
+            <input type="password" placeholder="Password (min. 6 caratteri)" value={password} onChange={e => setPassword(e.target.value)} required style={inputStyle} />
             
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '5px 0' }}>
               <input 
@@ -302,7 +334,7 @@ export function Auth({
         )}
       </div>
 
-      {/* MODALE INFORMATIVA PRIVACY DINAMICA */}
+      {/* MODALE INFORMATIVA PRIVACY */}
       {showPrivacyModal && (
         <div style={{
           position: 'fixed',
@@ -329,10 +361,10 @@ export function Auth({
           }}>
             <h3 style={{ color: 'var(--barber-red)', marginTop: 0 }}>Informativa sulla Privacy</h3>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-              Ai sensi del Regolamento UE 2016/679 (GDPR), informiamo che i dati raccolti (Nome, Cognome, Età, Telefono, Email) vengono trattati esclusivamente per consentire la gestione delle prenotazioni e dell'account utente presso <strong>{appName}</strong>.
+              Ai sensi del Regolamento UE 2016/679 (GDPR), i dati raccolti (Nome, Cognome, Età, Telefono, Email) sono trattati esclusivamente per la gestione delle prenotazioni e dell'account utente presso <strong>{appName}</strong>.
             </p>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-              I dati sono conservati in modo sicuro e non verranno ceduti a terzi. Puoi richiedere la cancellazione del tuo profilo e dei relativi dati in qualsiasi momento all'interno della sezione <em>Profilo</em> dell'applicazione.
+              I dati sono protetti e non ceduti a terzi. Puoi richiederne la cancellazione in qualsiasi momento direttamente dall'applicazione.
             </p>
             <button 
               onClick={() => setShowPrivacyModal(false)}
@@ -408,5 +440,5 @@ const successBoxStyle = {
   textAlign: 'center'
 }
 
-const linkTextStyle = { textAlign: 'center', color: 'var(--text-muted)', fontSize: '14px', marginTop: '10px' }
+const linkTextStyle = { textAlign: 'center', color: 'var(--text-muted)', fontSize: '14px',marginTop: '10px' }
 const linkStyle = { color: '#FFFFFF', cursor: 'pointer', textDecoration: 'underline', fontWeight: 'bold' }

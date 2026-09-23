@@ -60,14 +60,16 @@ export function InstallGuideModal() {
   return (
     <div style={{
       position: 'fixed',
-      bottom: '20px',
+      bottom: '85px', // Sollevato per non sovrapporsi alla barra di navigazione inferiore
       left: '15px',
       right: '15px',
+      maxWidth: '450px',
+      margin: '0 auto',
       backgroundColor: '#1c1c1e',
       border: '2px solid var(--barber-red)',
       borderRadius: '12px',
       padding: '16px',
-      zIndex: 9999,
+      zIndex: 999,
       boxShadow: '0 8px 24px rgba(0,0,0,0.8)',
       color: '#FFF'
     }}>

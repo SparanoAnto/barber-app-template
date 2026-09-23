@@ -15,6 +15,17 @@ const DEFAULT_HOLIDAYS = [
   '12-26', // Santo Stefano
 ]
 
+// Funzione helper per assegnare un'icona dinamica in base al nome della categoria
+const getCategoryIcon = (categoryName) => {
+  const name = categoryName.toLowerCase()
+  if (name.includes('capelli') || name.includes('taglio')) return '✂️'
+  if (name.includes('barba')) return '🧔'
+  if (name.includes('prodotto') || name.includes('rivendita')) return '🛍️'
+  if (name.includes('estetica') || name.includes('viso') || name.includes('trattamenti')) return '✨'
+  if (name.includes('colore') || name.includes('tintura')) return '🎨'
+  return '📌' // Icona di default per le altre categorie (es. Generale)
+}
+
 export function BookingView({ 
   services, 
   userId, 
@@ -30,6 +41,9 @@ export function BookingView({
 }) {
   const [selectedServices, setSelectedServices] = useState([])
   const [customServicePrices, setCustomServicePrices] = useState({})
+  
+  // Stato per gestire i minuti extra tramite il box azzurro (Admin)
+  const [adminExtraMinutes, setAdminExtraMinutes] = useState(0)
 
   const [selectedDate, setSelectedDate] = useState('')
   const [activeBarbers, setActiveBarbers] = useState([]) 
@@ -44,6 +58,13 @@ export function BookingView({
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [dateError, setDateError] = useState('')
   const [holidayNotice, setHolidayNotice] = useState('')
+
+  // Troviamo il servizio extra configurato nel database (es. "Extra Time" da 30 min)
+  const configuredExtraService = services.find(s => 
+    (s.category && s.category.toLowerCase().includes('extra')) || 
+    (s.name && s.name.toLowerCase().includes('extra'))
+  )
+  const extraServiceDuration = configuredExtraService ? configuredExtraService.duration_minutes : 30
 
   // Data locale in formato YYYY-MM-DD
   const todayString = new Date().toLocaleDateString('sv-SE')
@@ -103,7 +124,6 @@ export function BookingView({
     return shopClosures.some(closure => dateStr >= closure.start_date && dateStr <= closure.end_date)
   }
 
-  // Genera gli slot orari calcolando se l'operatore ha un orario personalizzato per quel giorno
   const generateTimeSlots = () => {
     let targetOpening = openingTime
     let targetClosing = closingTime
@@ -139,9 +159,26 @@ export function BookingView({
 
   useEffect(() => {
     if (editingAppointment) {
-      const currentServiceIds = editingAppointment.appointment_services?.map(as => as.service_id || as.services?.id)
-      const initialServices = services.filter(s => currentServiceIds?.includes(s.id))
-      setSelectedServices(initialServices)
+      const currentServiceIds = editingAppointment.appointment_services?.map(as => as.service_id || as.services?.id) || []
+      
+      const normalServices = services.filter(s => currentServiceIds.includes(s.id) && !s.name.toLowerCase().includes('extra time') && !s.name.toLowerCase().includes('extra'))
+      const extraServiceFound = services.find(s => currentServiceIds.includes(s.id) && (s.name.toLowerCase().includes('extra time') || s.name.toLowerCase().includes('extra')))
+
+      setSelectedServices(normalServices)
+
+      if (extraServiceFound) {
+        setAdminExtraMinutes(extraServiceFound.duration_minutes || extraServiceDuration)
+      } else if (editingAppointment.start_time && editingAppointment.end_time) {
+        const [sH, sM] = editingAppointment.start_time.split(':').map(Number)
+        const [eH, eM] = editingAppointment.end_time.split(':').map(Number)
+        const diffMinutes = (eH * 60 + eM) - (sH * 60 + sM)
+        const baseDuration = normalServices.reduce((acc, s) => acc + s.duration_minutes, 0)
+        if (diffMinutes > baseDuration) {
+          setAdminExtraMinutes(diffMinutes - baseDuration)
+        } else {
+          setAdminExtraMinutes(0)
+        }
+      }
 
       const pricesMap = {}
       editingAppointment.appointment_services?.forEach(as => {
@@ -152,13 +189,12 @@ export function BookingView({
       })
       setCustomServicePrices(pricesMap)
 
+      if (editingAppointment.appointment_date) {
+        handleDateChange(editingAppointment.appointment_date)
+      }
+
       if (editingAppointment.start_time) {
-        const dt = new Date(editingAppointment.start_time)
-        const dateStr = dt.toLocaleDateString('sv-SE')
-        const hours = String(dt.getHours()).padStart(2, '0')
-        const minutes = String(dt.getMinutes()).padStart(2, '0')
-        handleDateChange(dateStr)
-        setSelectedTime(`${hours}:${minutes}`)
+        setSelectedTime(editingAppointment.start_time.slice(0, 5))
       }
 
       if (activeBarbers.length > 0) {
@@ -170,6 +206,7 @@ export function BookingView({
     } else {
       setSelectedServices([])
       setCustomServicePrices({})
+      setAdminExtraMinutes(0)
       setSelectedDate('')
       setSelectedBarber(null)
       setSelectedTime('')
@@ -198,7 +235,9 @@ export function BookingView({
     }))
   }
 
-  const totalDuration = selectedServices.reduce((acc, s) => acc + s.duration_minutes, 0)
+  // Calcolo durata totale (Servizi normali + minuti extra del box azzurro)
+  const baseServicesDuration = selectedServices.reduce((acc, s) => acc + s.duration_minutes, 0)
+  const totalDuration = baseServicesDuration + (isAdmin ? Number(adminExtraMinutes) : 0)
   
   const totalPrice = selectedServices.reduce((acc, s) => {
     const priceToUse = (s.duration_minutes === 0 && customServicePrices[s.id] !== undefined && customServicePrices[s.id] !== '')
@@ -279,19 +318,13 @@ export function BookingView({
 
   async function fetchExistingAppointments() {
     setLoadingSlots(true)
-    const startOfDay = new Date(`${selectedDate}T00:00:00`)
-    const endOfDay = new Date(`${selectedDate}T23:59:59`)
-
-    const startIso = new Date(startOfDay.getTime() - (3 * 3600 * 1000)).toISOString()
-    const endIso = new Date(endOfDay.getTime() + (3 * 3600 * 1000)).toISOString()
 
     let query = supabase
       .from('appointments')
-      .select('id, start_time, end_time')
+      .select('id, appointment_date, start_time, end_time')
       .eq('barber_id', selectedBarber.id)
+      .eq('appointment_date', selectedDate)
       .neq('status', 'cancelled')
-      .gte('start_time', startIso)
-      .lte('start_time', endIso)
 
     if (editingAppointment?.id) {
       query = query.neq('id', editingAppointment.id)
@@ -323,37 +356,63 @@ export function BookingView({
     if (!selectedDate) return false
     const now = new Date()
     const proposedStart = new Date(`${selectedDate}T${slot}:00`)
-    if (proposedStart < now) return false
+    if (selectedDate === todayString && proposedStart < now) return false
     if (!isBarberAvailableAtSlot(slot)) return false
 
-    const effectiveDuration = totalDuration === 0 ? 30 : totalDuration
-    const proposedStartMs = proposedStart.getTime()
-    const proposedEndMs = proposedStartMs + effectiveDuration * 60000
+    const effectiveDuration = totalDuration === 0 ? slotIntervalMinutes : totalDuration
+    const [pH, pM] = slot.split(':').map(Number)
+    const proposedStartMinutes = pH * 60 + pM
+    const proposedEndMinutes = proposedStartMinutes + effectiveDuration
 
     for (const app of existingAppointments) {
-      const existingStart = new Date(app.start_time).getTime()
-      const existingEnd = new Date(app.end_time).getTime()
-      if (proposedStartMs < existingEnd && proposedEndMs > existingStart) return false
+      const [eStartH, eStartM] = app.start_time.slice(0, 5).split(':').map(Number)
+      const [eEndH, eEndM] = app.end_time.slice(0, 5).split(':').map(Number)
+      const existingStartMinutes = eStartH * 60 + eStartM
+      const existingEndMinutes = eEndH * 60 + eEndM
+
+      if (proposedStartMinutes < existingEndMinutes && proposedEndMinutes > existingStartMinutes) {
+        return false
+      }
     }
     return true
   }
 
   async function handleConfirmBooking() {
     if (!selectedDate || !selectedBarber || !selectedTime || selectedServices.length === 0) {
-      alert("Seleziona tutti i campi obbligatori.")
+      alert("Seleziona tutti i campi obbligatori e almeno un servizio.")
       return
     }
 
-    const startDateTime = new Date(`${selectedDate}T${selectedTime}:00`)
+    const [startH, startM] = selectedTime.split(':').map(Number)
     const effectiveDuration = totalDuration === 0 ? slotIntervalMinutes : totalDuration
-    const endDateTime = new Date(startDateTime.getTime() + effectiveDuration * 60000)
+    
+    const startDateObj = new Date()
+    startDateObj.setHours(startH, startM + effectiveDuration, 0)
+    const endH = String(startDateObj.getHours()).padStart(2, '0')
+    const endMin = String(startDateObj.getMinutes()).padStart(2, '0')
+    const endTimeString = `${endH}:${endMin}:00`
+    const startTimeString = `${selectedTime}:00`
 
     try {
+      let servicesToSave = [...selectedServices]
+
+      if (isAdmin && adminExtraMinutes > 0) {
+        let extraService = configuredExtraService
+        if (!extraService) {
+          extraService = services.find(s => s.name.toLowerCase().includes('extra'))
+        }
+
+        if (extraService && !servicesToSave.some(s => s.id === extraService.id)) {
+          servicesToSave.push(extraService)
+        }
+      }
+
       if (editingAppointment && editingAppointment.id) {
         const updatePayload = {
           barber_id: selectedBarber.id,
-          start_time: startDateTime.toISOString(),
-          end_time: endDateTime.toISOString(),
+          appointment_date: selectedDate,
+          start_time: startTimeString,
+          end_time: endTimeString,
           total_price: totalPrice
         }
 
@@ -373,15 +432,15 @@ export function BookingView({
           .eq('appointment_id', editingAppointment.id)
         if (delError) throw delError
 
-        const joins = selectedServices.map(s => {
+        const joins = servicesToSave.map(s => {
           const finalPrice = (s.duration_minutes === 0 && customServicePrices[s.id] !== undefined && customServicePrices[s.id] !== '')
             ? parseFloat(customServicePrices[s.id])
-            : parseFloat(s.price)
+            : parseFloat(s.price || 0)
 
           return {
             appointment_id: editingAppointment.id,
             service_id: s.id,
-            price: finalPrice 
+            price: isNaN(finalPrice) ? 0 : finalPrice
           }
         })
 
@@ -395,8 +454,9 @@ export function BookingView({
         const newAppointment = {
           user_id: userId,
           barber_id: selectedBarber.id,
-          start_time: startDateTime.toISOString(),
-          end_time: endDateTime.toISOString(),
+          appointment_date: selectedDate,
+          start_time: startTimeString,
+          end_time: endTimeString,
           total_price: totalPrice,
           status: 'confirmed'
         }
@@ -412,15 +472,15 @@ export function BookingView({
           .single()
         if (appError) throw appError
 
-        const joins = selectedServices.map(s => {
+        const joins = servicesToSave.map(s => {
           const finalPrice = (s.duration_minutes === 0 && customServicePrices[s.id] !== undefined && customServicePrices[s.id] !== '')
             ? parseFloat(customServicePrices[s.id])
-            : parseFloat(s.price)
+            : parseFloat(s.price || 0)
 
           return {
             appointment_id: appData.id,
             service_id: s.id,
-            price: finalPrice
+            price: isNaN(finalPrice) ? 0 : finalPrice
           }
         })
 
@@ -467,63 +527,119 @@ export function BookingView({
       )}
 
       <h3 className="section-title">1. Seleziona Servizi o Prodotti</h3>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
-        {services
-          .filter(s => isAdmin || s.is_bookable)
-          .map(s => {
-            const isSelected = selectedServices.some(item => item.id === s.id)
-            const isZeroDuration = s.duration_minutes === 0
-            const isDiscountOrIntegration = s.name.toLowerCase().includes('sconto') || s.name.toLowerCase().includes('integrazione')
 
-            return (
-              <div key={s.id} style={{
-                padding: '14px 16px',
-                borderRadius: '8px',
-                border: isSelected ? '1px solid var(--barber-red)' : '1px solid var(--border-color)',
-                backgroundColor: isSelected ? 'rgba(211, 47, 47, 0.15)' : 'rgba(24, 24, 24, 0.85)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px',
-                boxShadow: isSelected ? '0 0 12px rgba(211, 47, 47, 0.2)' : 'none',
-                transition: 'all 0.2s ease'
-              }}>
-                <div onClick={() => toggleService(s)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
-                  <div>
-                    <strong style={{ fontSize: '1rem', color: '#ffffff' }}>{s.name}</strong>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                      {isZeroDuration && !isDiscountOrIntegration ? '📦 Prodotto / Extra (Senza durata)' : isZeroDuration ? '' : `⏱ ${s.duration_minutes} min`}
+      {/* Raggruppamento dinamico per categoria con icone dedicate */}
+      {(() => {
+        const filteredServices = services.filter(s => {
+          const isExtraCategory = s.category && s.category.toLowerCase().includes('extra')
+          const isExtraName = s.name && s.name.toLowerCase().includes('extra')
+          const shouldHideFromList = isExtraCategory || isExtraName
+          return (isAdmin || s.is_bookable) && !shouldHideFromList;
+        });
+        
+        const categoriesMap = filteredServices.reduce((acc, service) => {
+          const cat = service.category && service.category.trim() !== '' ? service.category : 'Generale';
+          if (!acc[cat]) acc[cat] = [];
+          acc[cat].push(service);
+          return acc;
+        }, {});
+
+        return Object.entries(categoriesMap).map(([categoryName, catServices]) => (
+          <div key={categoryName} style={{ marginBottom: '20px' }}>
+            <div style={{ 
+              fontSize: '0.85rem', 
+              fontWeight: 'bold', 
+              color: 'var(--barber-red)', 
+              marginBottom: '10px', 
+              textTransform: 'uppercase', 
+              letterSpacing: '0.5px',
+              borderBottom: '1px solid var(--border-color)',
+              paddingBottom: '4px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}>
+              <span>{getCategoryIcon(categoryName)}</span> {categoryName}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {catServices.map(s => {
+                const isSelected = selectedServices.some(item => item.id === s.id)
+                const isZeroDuration = s.duration_minutes === 0
+                const isDiscountOrIntegration = s.name.toLowerCase().includes('sconto') || s.name.toLowerCase().includes('integrazione')
+
+                return (
+                  <div key={s.id} style={{
+                    padding: '14px 16px',
+                    borderRadius: '8px',
+                    border: isSelected ? '1px solid var(--barber-red)' : '1px solid var(--border-color)',
+                    backgroundColor: isSelected ? 'rgba(211, 47, 47, 0.15)' : 'rgba(24, 24, 24, 0.85)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                    boxShadow: isSelected ? '0 0 12px rgba(211, 47, 47, 0.2)' : 'none',
+                    transition: 'all 0.2s ease'
+                  }}>
+                    <div onClick={() => toggleService(s)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
+                      <div>
+                        <strong style={{ fontSize: '1rem', color: '#ffffff' }}>{s.name}</strong>
+                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                          {isZeroDuration && !isDiscountOrIntegration ? '📦 Prodotto / Extra (Senza durata)' : isZeroDuration ? '' : `⏱ ${s.duration_minutes} min`}
+                        </div>
+                      </div>
+                      <div style={{ color: 'var(--barber-red)', fontWeight: '800', fontSize: '1.1rem' }}>
+                        {!isZeroDuration && `€${parseFloat(s.price).toFixed(2)}`}
+                      </div>
                     </div>
-                  </div>
-                  <div style={{ color: 'var(--barber-red)', fontWeight: '800', fontSize: '1.1rem' }}>
-                    {!isZeroDuration && `€${parseFloat(s.price).toFixed(2)}`}
-                  </div>
-                </div>
 
-                {isSelected && isZeroDuration && isAdmin && (
-                  <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '10px', background: 'rgba(0,0,0,0.3)', padding: '8px', borderRadius: '6px', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '12px', color: '#FFD700', fontWeight: 'bold' }}>Inserisci Importo (€):</span>
-                    <input
-                      type="number"
-                      step="0.05"
-                      placeholder="Es: 10"
-                      value={customServicePrices[s.id] !== undefined ? customServicePrices[s.id] : s.price}
-                      onChange={(e) => handleCustomPriceChange(s.id, e.target.value)}
-                      style={{ ...inputStyle, padding: '6px 10px', width: '120px', backgroundColor: '#111', color: '#FFD700', fontWeight: 'bold' }}
-                    />
-                    {isDiscountOrIntegration && (
-                      <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                        (Usa segno negativo es. -5 per sconti)
-                      </span>
+                    {isSelected && isZeroDuration && isAdmin && (
+                      <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '10px', background: 'rgba(0,0,0,0.3)', padding: '8px', borderRadius: '6px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '12px', color: '#FFD700', fontWeight: 'bold' }}>Inserisci Importo (€):</span>
+                        <input
+                          type="number"
+                          step="0.05"
+                          placeholder="Es: 10"
+                          value={customServicePrices[s.id] !== undefined ? customServicePrices[s.id] : s.price}
+                          onChange={(e) => handleCustomPriceChange(s.id, e.target.value)}
+                          style={{ ...inputStyle, padding: '6px 10px', width: '120px', backgroundColor: '#111', color: '#FFD700', fontWeight: 'bold' }}
+                        />
+                        {isDiscountOrIntegration && (
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                            (Usa segno negativo es. -5 per sconti)
+                          </span>
+                        )}
+                      </div>
                     )}
                   </div>
-                )}
-              </div>
-            )
-          })}
-      </div>
+                )
+              })}
+            </div>
+          </div>
+        ))
+      })()}
 
       {selectedServices.length > 0 && (
         <>
+          {/* Box Azzurro Admin: Gestione pulita basata sui minuti configurati nel database (es. 30 min) */}
+          {isAdmin && (
+            <div style={{ padding: '14px 16px', background: 'rgba(25, 118, 210, 0.1)', border: '1px solid var(--barber-blue)', borderRadius: '8px', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                <div>
+                  <strong style={{ color: '#64B5F6', fontSize: '0.9rem', display: 'block' }}>⏱️ Regolazione Durata Extra (Admin)</strong>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Aggiunge minuti e registra automaticamente il servizio extra nelle analisi.</span>
+                </div>
+                <select
+                  value={adminExtraMinutes}
+                  onChange={(e) => setAdminExtraMinutes(Number(e.target.value))}
+                  style={{ ...inputStyle, width: '160px', padding: '8px 10px', backgroundColor: '#111', color: '#FFF', fontWeight: 'bold' }}
+                >
+                  <option value={0}>Nessun extra (+0 min)</option>
+                  <option value={extraServiceDuration}>+{extraServiceDuration} min (Tot: {baseServicesDuration + extraServiceDuration}m)</option>
+                </select>
+              </div>
+            </div>
+          )}
+
           <div style={{ padding: '12px 16px', background: 'rgba(30, 30, 30, 0.9)', borderLeft: '4px solid var(--barber-red)', borderRadius: '6px', marginBottom: '25px' }}>
             <strong style={{ color: '#FFF' }}>Riepilogo: {totalDuration > 0 ? `${totalDuration} min` : 'Solo Prodotti/Extra'} | Totale: €{totalPrice.toFixed(2)}</strong>
           </div>

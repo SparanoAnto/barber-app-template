@@ -39,6 +39,7 @@ export function AppointmentsView({ userId, isAdmin, onEditAppointment }) {
         .from('appointments')
         .select(`
           id,
+          appointment_date,
           start_time,
           end_time,
           status,
@@ -56,13 +57,9 @@ export function AppointmentsView({ userId, isAdmin, onEditAppointment }) {
         .neq('status', 'cancelled')
 
       if (isAdmin) {
-        // FIX TIMEZONE: Costruzione dei margini di giornata basati sull'ora locale
-        const startOfDay = new Date(`${selectedDate}T00:00:00`).toISOString()
-        const endOfDay = new Date(`${selectedDate}T23:59:59`).toISOString()
-
+        // Filtro preciso basato direttamente sul campo appointment_date (YYYY-MM-DD)
         query = query
-          .gte('start_time', startOfDay)
-          .lte('start_time', endOfDay)
+          .eq('appointment_date', selectedDate)
           .order('start_time', { ascending: true })
 
         if (selectedBarberId !== 'all') {
@@ -71,6 +68,7 @@ export function AppointmentsView({ userId, isAdmin, onEditAppointment }) {
       } else {
         query = query
           .eq('user_id', userId)
+          .order('appointment_date', { ascending: false })
           .order('start_time', { ascending: false })
       }
 
@@ -86,14 +84,14 @@ export function AppointmentsView({ userId, isAdmin, onEditAppointment }) {
   }
 
   /**
-   * Helper per verificare le regole di modifica/annullamento
+   * Helper per verificare le regole di modifica/annullamento basate su data e ora locali
    */
-  function checkAppointmentPermissions(startTime) {
+  function checkAppointmentPermissions(appointmentDate, startTime) {
     if (isAdmin) return { canModify: true, canCancel: true, reason: '' }
 
     const now = new Date().getTime()
-    const start = new Date(startTime).getTime()
-    const diffMs = start - now
+    const appointmentDateTime = new Date(`${appointmentDate}T${startTime}`).getTime()
+    const diffMs = appointmentDateTime - now
     const fifteenMinutesMs = 15 * 60 * 1000
 
     if (diffMs <= 0) {
@@ -116,7 +114,7 @@ export function AppointmentsView({ userId, isAdmin, onEditAppointment }) {
   }
 
   async function handleCancelAppointment(item) {
-    const { canCancel, reason } = checkAppointmentPermissions(item.start_time)
+    const { canCancel, reason } = checkAppointmentPermissions(item.appointment_date, item.start_time)
 
     if (!canCancel) {
       alert(reason || "Non hai i permessi per annullare questo appuntamento.")
@@ -141,13 +139,49 @@ export function AppointmentsView({ userId, isAdmin, onEditAppointment }) {
     }
   }
 
-  function formatDateTime(isoString) {
-    if (!isoString) return { date: 'N/D', time: '' }
-    const dt = new Date(isoString)
-    const date = dt.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })
-    const time = dt.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
-    return { date, time }
+  /**
+   * Funzione Click to Chat per l'invio rapido del promemoria WhatsApp (solo Admin)
+   */
+  function sendWhatsAppReminder(item) {
+    const phone = item.profiles?.phone || ''
+    const clientName = item.custom_client_name 
+      ? item.custom_client_name 
+      : `${item.profiles?.first_name || ''} ${item.profiles?.last_name || ''}`.trim() || 'Cliente'
+    
+    const timeFormatted = item.start_time ? item.start_time.slice(0, 5) : ''
+    
+    const message = encodeURIComponent(
+      `Ciao ${clientName}! Ti ricordiamo il tuo appuntamento fissato per oggi alle ore ${timeFormatted} presso il nostro salone. A presto!`
+    )
+
+    const cleanPhone = phone.replace(/[^0-9+]/g, '')
+    const url = cleanPhone 
+      ? `https://wa.me/${cleanPhone}?text=${message}` 
+      : `https://wa.me/?text=${message}`
+
+    window.open(url, '_blank')
   }
+
+  function formatDate(dateStr) {
+    if (!dateStr) return 'N/D'
+    const [year, month, day] = dateStr.split('-')
+    return `${day}/${month}/${year}`
+  }
+
+  // --- LOGICA PROMEMORIA AUTOMATICO IN-APP (Solo per il Cliente) ---
+  const todayString = new Date().toLocaleDateString('sv-SE')
+  const imminentClientAppointment = !isAdmin ? appointments.find(item => {
+    const isToday = item.appointment_date === todayString
+    const now = new Date()
+    const currentTimeMinutes = now.getHours() * 60 + now.getMinutes()
+    
+    if (isToday && item.start_time) {
+      const [h, m] = item.start_time.split(':').map(Number)
+      const appointmentMinutes = h * 60 + m
+      return appointmentMinutes > currentTimeMinutes
+    }
+    return false
+  }) : null
 
   return (
     <div>
@@ -157,9 +191,33 @@ export function AppointmentsView({ userId, isAdmin, onEditAppointment }) {
         </h3>
       </div>
 
-      {isAdmin && (
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+      {/* BANNER NOTIFICA AUTOMATICA IN-APP PER IL CLIENTE */}
+      {!isAdmin && imminentClientAppointment && (
+        <div style={{
+          backgroundColor: 'rgba(212, 160, 23, 0.15)',
+          border: '1px solid #d4a017',
+          borderRadius: '8px',
+          padding: '14px 16px',
+          marginBottom: '20px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px'
+        }}>
+          <span style={{ fontSize: '24px' }}>⏰</span>
           <div style={{ flex: 1 }}>
+            <h4 style={{ margin: '0 0 4px 0', color: '#FFD700', fontSize: '15px' }}>
+              Promemoria Appuntamento Imminente!
+            </h4>
+            <p style={{ margin: 0, fontSize: '13px', color: '#FFF' }}>
+              Hai un appuntamento oggi alle ore <strong style={{ color: '#FFD700' }}>{imminentClientAppointment.start_time?.slice(0, 5)}</strong> con l'operatore <strong style={{ color: '#FFF' }}>{imminentClientAppointment.barbers?.name || 'il salone'}</strong>. Ti aspettiamo!
+            </p>
+          </div>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 200px', minWidth: '180px' }}>
             <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '5px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               Data Agenda:
             </label>
@@ -171,7 +229,7 @@ export function AppointmentsView({ userId, isAdmin, onEditAppointment }) {
             />
           </div>
 
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: '1 1 200px', minWidth: '180px' }}>
             <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '5px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               Operatore:
             </label>
@@ -201,9 +259,14 @@ export function AppointmentsView({ userId, isAdmin, onEditAppointment }) {
         </p>
       ) : (
         appointments.map((item) => {
-          const { date, time } = formatDateTime(item.start_time)
-          const { canModify, canCancel, reason } = checkAppointmentPermissions(item.start_time)
-          const isPast = new Date(item.start_time) <= new Date()
+          const formattedDate = formatDate(item.appointment_date)
+          const formattedTime = item.start_time ? item.start_time.slice(0, 5) : ''
+          const { canModify, canCancel, reason } = checkAppointmentPermissions(item.appointment_date, item.start_time)
+          
+          // Verifica se l'appuntamento è passato confrontando data e ora correnti
+          const now = new Date()
+          const appointmentDateTime = new Date(`${item.appointment_date}T${item.start_time || '00:00:00'}`)
+          const isPast = appointmentDateTime <= now
 
           // Separiamo e ordiniamo i servizi: prima quelli principali (durata > 0), poi rivendite/extra (durata 0)
           const sortedServices = item.appointment_services
@@ -234,8 +297,30 @@ export function AppointmentsView({ userId, isAdmin, onEditAppointment }) {
               }}
             >
               {isAdmin && (
-                <div style={{ marginBottom: '10px', paddingBottom: '8px', borderBottom: '1px solid var(--border-color)', fontWeight: 'bold', color: '#FFF', fontSize: '0.95rem' }}>
-                  👤 {clientName} <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 'normal' }}>{clientPhone}</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', paddingBottom: '8px', borderBottom: '1px solid var(--border-color)' }}>
+                  <div style={{ fontWeight: 'bold', color: '#FFF', fontSize: '0.95rem' }}>
+                    👤 {clientName} <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 'normal' }}>{clientPhone}</span>
+                  </div>
+                  {/* Pulsante rapido WhatsApp visibile solo all'admin */}
+                  <button
+                    onClick={() => sendWhatsAppReminder(item)}
+                    title="Invia promemoria WhatsApp al cliente"
+                    style={{
+                      backgroundColor: '#25D366',
+                      border: 'none',
+                      color: '#FFF',
+                      padding: '5px 10px',
+                      borderRadius: '6px',
+                      fontSize: '11px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    💬 WhatsApp
+                  </button>
                 </div>
               )}
 
@@ -259,7 +344,7 @@ export function AppointmentsView({ userId, isAdmin, onEditAppointment }) {
                 💈 Barbiere: <strong style={{ color: '#FFF' }}>{item.barbers?.name || 'Non specificato'}</strong>
               </p>
               <p style={{ margin: '4px 0', fontSize: '13px', color: 'var(--text-muted)' }}>
-                📅 Data: <strong style={{ color: '#FFF' }}>{date}</strong> ore <strong style={{ color: '#FFF' }}>{time}</strong>
+                📅 Data: <strong style={{ color: '#FFF' }}>{formattedDate}</strong> ore <strong style={{ color: '#FFF' }}>{formattedTime}</strong>
                 {isPast && (
                   <span style={{ marginLeft: '8px', fontSize: '11px', color: '#888', fontWeight: 'bold' }}>
                     (Scaduto)

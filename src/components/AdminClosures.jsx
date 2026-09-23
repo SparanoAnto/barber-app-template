@@ -40,7 +40,7 @@ export function AdminClosures() {
 
     const { error } = await supabase
       .from('shop_closures')
-      .insert([{ start_date: startDate, end_date: endDate, reason: reason || 'Ferie Collettive' }])
+      .insert([{ start_date: startDate, end_date: endDate, reason: reason.trim() || 'Ferie Collettive' }])
 
     if (error) {
       alert("Errore nell'inserimento: " + error.message)
@@ -57,6 +57,12 @@ export function AdminClosures() {
     if (!window.confirm("Vuoi rimuovere questo periodo di chiusura?")) return
     const { error } = await supabase.from('shop_closures').delete().eq('id', id)
     if (!error) fetchClosures()
+  }
+
+  function formatDate(dateStr) {
+    if (!dateStr) return ''
+    const [year, month, day] = dateStr.split('-')
+    return `${day}/${month}/${year}`
   }
 
   return (
@@ -128,7 +134,7 @@ export function AdminClosures() {
               <div>
                 <strong style={{ color: '#FFF' }}>{c.reason}</strong>
                 <div style={{ fontSize: '12px', color: '#64B5F6', marginTop: '2px' }}>
-                  🏖️ Dal {c.start_date} al {c.end_date}
+                  🏖️ Dal {formatDate(c.start_date)} al {formatDate(c.end_date)}
                 </div>
               </div>
               <button 
@@ -154,7 +160,8 @@ const inputStyle = {
   color: '#FFF',
   boxSizing: 'border-box',
   fontSize: '14px',
-  outline: 'none'
+  outline: 'none',
+  colorScheme: 'dark'
 }
 
 const btnStyle = {

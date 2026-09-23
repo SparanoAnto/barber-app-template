@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabaseClient'
 
-// Cache globale temporanea per evitare il caricamento a ogni cambio di tab
+// Cache globale temporanea
 let cachedStaffData = {
   barbers: [],
   workingDays: [],
@@ -27,9 +27,10 @@ export function AdminStaff() {
 
   const [workingDays, setWorkingDays] = useState(cachedStaffData.workingDays)
   const [terminationDates, setTerminationDates] = useState({})
-  
-  // Se abbiamo già i dati in cache, partiamo con loading = false per zero sfarfallii
   const [loading, setLoading] = useState(!cachedStaffData.loaded)
+
+  // Utilizziamo un ref per evitare fetch multiple simultanee dal Realtime
+  const fetchingRef = useRef(false)
 
   const todayString = new Date().toLocaleDateString('sv-SE')
 
@@ -43,8 +44,24 @@ export function AdminStaff() {
     { id: 0, label: 'Dom' },
   ]
 
+  // Helper sicuro per calcolare il giorno della settimana da una stringa 'YYYY-MM-DD'
+  function getDayOfWeek(dateString) {
+    const parts = dateString.split('-')
+    if (parts.length !== 3) return new Date(dateString).getDay()
+    const year = parseInt(parts[0], 10)
+    const month = parseInt(parts[1], 10) - 1
+    const day = parseInt(parts[2], 10)
+    return new Date(year, month, day).getDay()
+  }
+
+  // Helper per ottenere l'etichetta testuale del giorno (Lun, Mar, ecc.)
+  function getDayName(dateString) {
+    const dayIndex = getDayOfWeek(dateString)
+    const found = DAYS_OF_WEEK.find(d => d.id === dayIndex)
+    return found ? found.label : ''
+  }
+
   useEffect(() => {
-    // Se non abbiamo i dati in cache, facciamo il fetch con il loader, altrimenti aggiorniamo in background in modo invisibile
     fetchData(!cachedStaffData.loaded)
 
     const channel = supabase
@@ -61,55 +78,64 @@ export function AdminStaff() {
   }, [])
 
   async function fetchData(showLoader = false) {
+    if (fetchingRef.current) return
+    fetchingRef.current = true
+
     if (showLoader) setLoading(true)
     
-    const { data: bData } = await supabase
-      .from('barbers')
-      .select('*')
-      .order('name', { ascending: true })
+    try {
+      const { data: bData } = await supabase
+        .from('barbers')
+        .select('*')
+        .order('name', { ascending: true })
 
-    if (bData) {
-      setBarbers(bData)
-      cachedStaffData.barbers = bData
-      setTerminationDates(prev => {
-        const termMap = { ...prev }
-        bData.forEach(b => {
-          if (termMap[b.id] === undefined) {
-            termMap[b.id] = b.termination_date || ''
-          }
+      if (bData) {
+        setBarbers(bData)
+        cachedStaffData.barbers = bData
+        setTerminationDates(prev => {
+          const termMap = { ...prev }
+          bData.forEach(b => {
+            if (termMap[b.id] === undefined) {
+              termMap[b.id] = b.termination_date || ''
+            }
+          })
+          return termMap
         })
-        return termMap
-      })
-    }
+      }
 
-    const { data: wdData } = await supabase.from('barber_working_days').select('*')
-    if (wdData) {
-      setWorkingDays(wdData)
-      cachedStaffData.workingDays = wdData
-    }
+      const { data: wdData } = await supabase.from('barber_working_days').select('*')
+      if (wdData) {
+        setWorkingDays(wdData)
+        cachedStaffData.workingDays = wdData
+      }
 
-    const { data: eData } = await supabase
-      .from('barber_exceptions')
-      .select('*, barbers(name)')
-      .gte('date', todayString)
-      .order('date', { ascending: true })
-    if (eData) {
-      setExceptions(eData)
-      cachedStaffData.exceptions = eData
-    }
+      const { data: eData } = await supabase
+        .from('barber_exceptions')
+        .select('*, barbers(name)')
+        .gte('date', todayString)
+        .order('date', { ascending: true })
+      if (eData) {
+        setExceptions(eData)
+        cachedStaffData.exceptions = eData
+      }
 
-    const { data: cData } = await supabase
-      .from('shop_closures')
-      .select('*')
-      .gte('end_date', todayString)
-      .order('start_date', { ascending: true })
-    if (cData) {
-      setClosures(cData)
-      cachedStaffData.closures = cData
-    }
+      const { data: cData } = await supabase
+        .from('shop_closures')
+        .select('*')
+        .gte('end_date', todayString)
+        .order('start_date', { ascending: true })
+      if (cData) {
+        setClosures(cData)
+        cachedStaffData.closures = cData
+      }
 
-    cachedStaffData.loaded = true
-    if (showLoader) setLoading(false)
+      cachedStaffData.loaded = true
+    } catch (err) {
+      console.error("Errore durante il fetch dei dati staff:", err)
+    } finally {
+      fetchingRef.current = false
+      if (showLoader) setLoading(false)
+    }
   }
 
   async function handleAddBarber(e) {
@@ -132,8 +158,26 @@ export function AdminStaff() {
     }
   }
 
+  // 1. DISATTIVAZIONE OPERATORE (Solo appuntamenti confermati e futuri)
   async function handleToggleActive(barber) {
     const newStatus = !barber.is_active
+    
+    if (!newStatus) {
+      const { data: appts } = await supabase
+        .from('appointments')
+        .select('*')
+        .eq('barber_id', barber.id)
+        .eq('status', 'confirmed')
+        .gte('appointment_date', todayString)
+
+      if (appts && appts.length > 0) {
+        const confirmDeactivate = window.confirm(
+          `⚠️ ATTENZIONE: L'operatore ${barber.name} ha ${appts.length} appuntamento/i futuro/i registrato/i!\n\nSe procedi alla disattivazione, ricordati di avvisare i clienti interessati. Vuoi continuare?`
+        )
+        if (!confirmDeactivate) return
+      }
+    }
+
     const { error } = await supabase
       .from('barbers')
       .update({ is_active: newStatus })
@@ -142,9 +186,27 @@ export function AdminStaff() {
     if (!error) fetchData(false)
   }
 
+  // 2. DATA FINE RAPPORTO (Solo appuntamenti confermati e futuri)
   async function handleSaveTerminationDate(barberId) {
     const rawVal = terminationDates[barberId]
     const termDate = rawVal && rawVal.trim() !== '' ? rawVal : null
+
+    if (termDate && termDate >= todayString) {
+      const { data: appts } = await supabase
+        .from('appointments')
+        .select('*')
+        .eq('barber_id', barberId)
+        .eq('status', 'confirmed')
+        .gte('appointment_date', todayString)
+        .lte('appointment_date', termDate)
+
+      if (appts && appts.length > 0) {
+        const proceed = window.confirm(
+          `⚠️ ATTENZIONE: Impostando questa data di fine rapporto, ci sono ${appts.length} appuntamenti programmati nel periodo (fino al ${termDate}).\n\nAssicurati di avvisare i clienti o di spostarli su un altro operatore. Vuoi salvare comunque?`
+        )
+        if (!proceed) return
+      }
+    }
 
     const { error } = await supabase
       .from('barbers')
@@ -159,8 +221,49 @@ export function AdminStaff() {
     }
   }
 
+  // 3. RIMOZIONE O AGGIUNTA GIORNO LAVORATIVO (Controllo globale con dettaglio date e giorni)
   async function handleToggleWorkingDay(barberId, dayOfWeek) {
     const exists = workingDays.some(wd => wd.barber_id === barberId && wd.day_of_week === dayOfWeek)
+
+    const currentActiveDays = workingDays
+      .filter(wd => wd.barber_id === barberId)
+      .map(wd => wd.day_of_week)
+    
+    let remainingActiveDays = []
+    if (exists) {
+      remainingActiveDays = currentActiveDays.filter(d => d !== dayOfWeek)
+    } else {
+      remainingActiveDays = [...currentActiveDays, dayOfWeek]
+    }
+
+    const { data: appts, error: apptError } = await supabase
+      .from('appointments')
+      .select('*')
+      .eq('barber_id', barberId)
+      .eq('status', 'confirmed')
+      .gte('appointment_date', todayString)
+
+    if (apptError) {
+      console.error("Errore nel controllo degli appuntamenti:", apptError)
+      return
+    }
+
+    const conflictingAppts = (appts || []).filter(a => {
+      const apptDayOfWeek = getDayOfWeek(a.appointment_date)
+      return !remainingActiveDays.includes(apptDayOfWeek)
+    })
+
+    if (conflictingAppts.length > 0) {
+      const affectedDetails = [...new Set(conflictingAppts.map(a => `${a.appointment_date} (${getDayName(a.appointment_date)})`))].sort()
+      const detailsListString = affectedDetails.join(', ')
+
+      const proceed = window.confirm(
+        `⚠️ ATTENZIONE: Con questa nuova pianificazione, ci sono ${conflictingAppts.length} appuntamenti futuri confermati in giorni in cui l'operatore non risulterà più disponibile!\n\n` +
+        `📅 Date e giorni coinvolti: ${detailsListString}\n\n` +
+        `Ricordati di avvisare i clienti o riprogrammare gli orari. Vuoi procedere comunque?`
+      )
+      if (!proceed) return
+    }
 
     if (exists) {
       const { error } = await supabase
@@ -179,7 +282,35 @@ export function AdminStaff() {
     }
   }
 
+  // 4. MODIFICA ORARIO GIORNALERO WORKING DAY (Solo confermati e futuri)
   async function handleUpdateWorkingDayTime(barberId, dayOfWeek, field, value) {
+    if (value) {
+      const { data: appts } = await supabase
+        .from('appointments')
+        .select('*')
+        .eq('barber_id', barberId)
+        .eq('status', 'confirmed')
+        .gte('appointment_date', todayString)
+
+      const conflicting = (appts || []).filter(a => {
+        const d = getDayOfWeek(a.appointment_date)
+        if (d !== dayOfWeek) return false
+        if (field === 'start_time' && a.start_time < value) return true
+        if (field === 'end_time' && a.end_time > value) return true
+        return false
+      })
+
+      if (conflicting.length > 0) {
+        const affectedDetails = [...new Set(conflicting.map(a => `${a.appointment_date} (${getDayName(a.appointment_date)})`))].sort()
+        const proceed = window.confirm(
+          `⚠️ ATTENZIONE: Modificando questo orario, ci sono ${conflicting.length} appuntamenti fuori dalla nuova fascia.\n\n` +
+          `📅 Date e giorni coinvolti: ${affectedDetails.join(', ')}\n\n` +
+          `Assicurati di avvisare i clienti. Vuoi procedere?`
+        )
+        if (!proceed) return
+      }
+    }
+
     const { error } = await supabase
       .from('barber_working_days')
       .update({ [field]: value ? value : null })
@@ -189,6 +320,7 @@ export function AdminStaff() {
     if (!error) fetchData(false)
   }
 
+  // 5. CHIUSURA COLLETTIVA SALONE (Solo confermati e futuri)
   async function handleAddClosure(e) {
     e.preventDefault()
     if (!closureStartDate || !closureEndDate) {
@@ -198,6 +330,22 @@ export function AdminStaff() {
     if (closureEndDate < closureStartDate) {
       alert("La data di fine non può essere precedente a quella di inizio.")
       return
+    }
+
+    const { data: conflictingAppts, error: apptError } = await supabase
+      .from('appointments')
+      .select('*, barbers(name)')
+      .eq('status', 'confirmed')
+      .gte('appointment_date', closureStartDate)
+      .lte('appointment_date', closureEndDate)
+
+    if (apptError) {
+      console.error("Errore controllo appuntamenti chiusura:", apptError)
+    } else if (conflictingAppts && conflictingAppts.length > 0) {
+      const proceed = window.confirm(
+        `⚠️ ATTENZIONE: Nel periodo di chiusura (${closureStartDate} ➔ ${closureEndDate}) ci sono ben ${conflictingAppts.length} appuntamenti prenotati!\n\nRicordati di avvisare i clienti. Vuoi procedere?`
+      )
+      if (!proceed) return
     }
 
     const { error } = await supabase
@@ -225,6 +373,7 @@ export function AdminStaff() {
     if (!error) fetchData(false)
   }
 
+  // 6. ASSENZA O PERMESSO SINGOLO OPERATORE (Solo confermati e futuri)
   async function handleAddException(e) {
     e.preventDefault()
     if (!selectedBarber || !exceptionDate) {
@@ -234,6 +383,32 @@ export function AdminStaff() {
     if (exceptionDate < todayString) {
       alert("Non puoi inserire un'assenza per una data passata.")
       return
+    }
+
+    const { data: conflictingAppts, error: apptError } = await supabase
+      .from('appointments')
+      .select('*')
+      .eq('barber_id', selectedBarber)
+      .eq('status', 'confirmed')
+      .eq('appointment_date', exceptionDate)
+      .gte('appointment_date', todayString)
+
+    if (apptError) {
+      console.error("Errore controllo appuntamenti operatore:", apptError)
+    } else if (conflictingAppts && conflictingAppts.length > 0) {
+      let filteredAppts = conflictingAppts
+      if (excStartTime && excEndTime) {
+        filteredAppts = conflictingAppts.filter(a => {
+          return a.start_time < excEndTime && a.end_time > excStartTime
+        })
+      }
+
+      if (filteredAppts.length > 0) {
+        const proceed = window.confirm(
+          `⚠️ ATTENZIONE: L'operatore ha ${filteredAppts.length} appuntamento/i confermato/i in questa fascia oraria nella data del ${exceptionDate} (${getDayName(exceptionDate)})!\n\nÈ necessario avvisare i clienti. Vuoi procedere comunque?`
+        )
+        if (!proceed) return
+      }
     }
 
     const payload = {
@@ -254,6 +429,7 @@ export function AdminStaff() {
       setExcEndTime('')
       setExceptionReason('')
       fetchData(false)
+      alert("Assenza registrata con successo!")
     }
   }
 
@@ -499,7 +675,7 @@ export function AdminStaff() {
                     <div>
                       <strong style={{ color: '#FFF' }}>{exc.barbers?.name || 'Operatore'}</strong>
                       <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                        📅 {exc.date} {exc.start_time && exc.end_time ? `🕒 ${exc.start_time.slice(0,5)} - ${exc.end_time.slice(0,5)}` : '(Tutto il giorno)'}
+                        📅 {exc.date} ({getDayName(exc.date)}) {exc.start_time && exc.end_time ? `🕒 ${exc.start_time.slice(0,5)} - ${exc.end_time.slice(0,5)}` : '(Tutto il giorno)'}
                       </div>
                       <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>Note: {exc.reason}</div>
                     </div>

@@ -30,14 +30,18 @@ export function AdminReports({ isOwner = false }) {
     setLoading(true)
 
     const [year, month] = selectedMonth.split('-')
-    const startOfMonth = new Date(year, month - 1, 1).toISOString()
-    const endOfMonth = new Date(year, month, 0, 23, 59, 59).toISOString()
+    const lastDay = new Date(year, month, 0).getDate()
+    
+    // Margini di data precisi basati sul formato YYYY-MM-DD
+    const startOfPeriod = `${selectedMonth}-01`
+    const endOfPeriod = `${selectedMonth}-${String(lastDay).padStart(2, '0')}`
 
     try {
       const { data: appointments, error: appError } = await supabase
         .from('appointments')
         .select(`
           id,
+          appointment_date,
           total_price,
           user_id,
           custom_client_name,
@@ -49,8 +53,8 @@ export function AdminReports({ isOwner = false }) {
             services ( name, duration_minutes, type ) 
           )
         `)
-        .gte('start_time', startOfMonth)
-        .lte('start_time', endOfMonth)
+        .gte('appointment_date', startOfPeriod)
+        .lte('appointment_date', endOfPeriod)
         .neq('status', 'cancelled')
 
       if (appError) throw appError
@@ -269,7 +273,7 @@ export function AdminReports({ isOwner = false }) {
   )
 }
 
-const inputStyle = { width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'rgba(24, 24, 24, 0.85)', color: '#FFF', fontSize: '14px', outline: 'none', boxSizing: 'border-box' }
+const inputStyle = { width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'rgba(24, 24, 24, 0.85)', color: '#FFF', fontSize: '14px', outline: 'none', boxSizing: 'border-box', colorScheme: 'dark' }
 const statCardStyle = { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '16px 12px' }
 const statIconStyle = { fontSize: '24px', marginBottom: '6px' }
 const statLabelStyle = { fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }

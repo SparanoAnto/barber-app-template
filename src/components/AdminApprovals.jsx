@@ -41,8 +41,7 @@ export function AdminApprovals({ onApprovalCountChange }) {
   async function fetchPendingUsers() {
     setLoading(true)
 
-    // Filtriamo direttamente sul DB dove is_approved è false (o nullo)
-    // Sfruttando la struttura booleana definita nel tuo schema
+    // Filtriamo direttamente sul DB dove is_approved è false o nullo
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
@@ -51,7 +50,6 @@ export function AdminApprovals({ onApprovalCountChange }) {
 
     if (error) {
       console.error('Errore recupero utenti:', error.message)
-      alert('Errore Supabase: ' + error.message)
       setPendingUsers([])
     } else {
       setPendingUsers(data || [])
@@ -97,7 +95,7 @@ export function AdminApprovals({ onApprovalCountChange }) {
 
   return (
     <div style={{ marginTop: '10px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '10px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '15px' }}>
         <h4 style={{ color: '#ffffff', fontSize: '1.1rem', margin: 0 }}>
           Richieste in Attesa <span style={{ color: 'var(--barber-blue)', fontWeight: 'bold' }}>({pendingUsers.length})</span>
         </h4>
@@ -147,7 +145,7 @@ export function AdminApprovals({ onApprovalCountChange }) {
 
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               <button
-                onClick={() => rejectUser(user.id, `${user.first_name} ${user.last_name}`)}
+                onClick={() => rejectUser(user.id, `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Utente')}
                 style={{
                   backgroundColor: 'transparent',
                   color: 'var(--barber-red)',
