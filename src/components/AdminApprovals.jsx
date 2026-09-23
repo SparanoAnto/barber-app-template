@@ -1,24 +1,58 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 
-export function AdminApprovals({ onApprovalChange }) {
+export function AdminApprovals({ onApprovalCountChange }) {
   const [pendingUsers, setPendingUsers] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetchPendingUsers()
+    let subscription = null
+
+    async function init() {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
+        await fetchPendingUsers()
+      } else {
+        setLoading(false)
+      }
+
+      subscription = supabase
+        .channel('public:profiles_approvals')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'profiles' },
+          () => {
+            fetchPendingUsers()
+            if (onApprovalCountChange) onApprovalCountChange()
+          }
+        )
+        .subscribe()
+    }
+
+    init()
+
+    return () => {
+      if (subscription) {
+        supabase.removeChannel(subscription)
+      }
+    }
   }, [])
 
   async function fetchPendingUsers() {
     setLoading(true)
+
+    // Filtriamo direttamente sul DB dove is_approved è false (o nullo)
+    // Sfruttando la struttura booleana definita nel tuo schema
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
-      .eq('is_approved', false)
-      .order('created_at', { ascending: false }) // 1. Ordinamento cronologico decrescente
+      .or('is_approved.is.false,is_approved.is.null')
+      .order('first_name', { ascending: true })
 
     if (error) {
       console.error('Errore recupero utenti:', error.message)
+      alert('Errore Supabase: ' + error.message)
+      setPendingUsers([])
     } else {
       setPendingUsers(data || [])
     }
@@ -34,14 +68,11 @@ export function AdminApprovals({ onApprovalChange }) {
     if (error) {
       alert('Errore nell\'approvazione: ' + error.message)
     } else {
-      // Rimuove l'utente approvato dalla lista locale
       setPendingUsers(prev => prev.filter(user => user.id !== userId))
-      // Notifica ad App.jsx di aggiornare il contatore del badge
-      if (onApprovalChange) onApprovalChange()
+      if (onApprovalCountChange) onApprovalCountChange()
     }
   }
 
-  // 2. Funzione per Rifiutare/Eliminare la richiesta
   async function rejectUser(userId, userName) {
     const confirmDelete = window.confirm(
       `Sei sicuro di voler rifiutare la richiesta di ${userName}?\nIl profilo verrà rimosso.`
@@ -57,10 +88,8 @@ export function AdminApprovals({ onApprovalChange }) {
     if (error) {
       alert('Errore durante il rifiuto della richiesta: ' + error.message)
     } else {
-      // Rimuove l'utente rifiutato dalla lista locale
       setPendingUsers(prev => prev.filter(user => user.id !== userId))
-      // Notifica ad App.jsx di aggiornare il contatore del badge
-      if (onApprovalChange) onApprovalChange()
+      if (onApprovalCountChange) onApprovalCountChange()
     }
   }
 
@@ -68,15 +97,25 @@ export function AdminApprovals({ onApprovalChange }) {
 
   return (
     <div style={{ marginTop: '10px' }}>
-      <h4 style={{ 
-        borderBottom: '1px solid var(--border-color)', 
-        paddingBottom: '10px', 
-        color: '#ffffff',
-        fontSize: '1.1rem',
-        marginTop: 0 
-      }}>
-        Richieste in Attesa <span style={{ color: 'var(--barber-blue)', fontWeight: 'bold' }}>({pendingUsers.length})</span>
-      </h4>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '10px' }}>
+        <h4 style={{ color: '#ffffff', fontSize: '1.1rem', margin: 0 }}>
+          Richieste in Attesa <span style={{ color: 'var(--barber-blue)', fontWeight: 'bold' }}>({pendingUsers.length})</span>
+        </h4>
+        <button
+          onClick={fetchPendingUsers}
+          style={{
+            backgroundColor: 'transparent',
+            border: '1px solid var(--border-color)',
+            color: 'var(--text-muted)',
+            padding: '4px 8px',
+            borderRadius: '4px',
+            fontSize: '0.75rem',
+            cursor: 'pointer'
+          }}
+        >
+          🔄 Aggiorna
+        </button>
+      </div>
 
       {pendingUsers.length === 0 ? (
         <p style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Nessuna richiesta da approvare.</p>
@@ -117,12 +156,8 @@ export function AdminApprovals({ onApprovalChange }) {
                   borderRadius: '6px',
                   cursor: 'pointer',
                   fontWeight: 'bold',
-                  fontSize: '0.8rem',
-                  transition: 'transform 0.1s ease, background-color 0.2s ease',
-                  flexShrink: 0
+                  fontSize: '0.8rem'
                 }}
-                onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.95)'}
-                onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
               >
                 Rifiuta
               </button>
@@ -137,13 +172,8 @@ export function AdminApprovals({ onApprovalChange }) {
                   borderRadius: '6px',
                   cursor: 'pointer',
                   fontWeight: 'bold',
-                  fontSize: '0.8rem',
-                  letterSpacing: '0.5px',
-                  transition: 'transform 0.1s ease, background-color 0.2s ease',
-                  flexShrink: 0
+                  fontSize: '0.8rem'
                 }}
-                onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.95)'}
-                onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
               >
                 Approva
               </button>
