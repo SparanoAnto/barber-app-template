@@ -108,12 +108,34 @@ export default function App() {
     return () => subscription.unsubscribe()
   }, [])
 
+  // Caricamento dati e ascolto Realtime per il Badge Admin
   useEffect(() => {
     if (session && (profile?.is_approved || profile?.role === 'admin')) {
       loadSaloneData()
     }
+    
+    let profileSubscription = null
+
     if (session && profile?.role === 'admin') {
       fetchPendingCount()
+
+      // Ascolto in tempo reale sulla tabella profiles per aggiornare il badge sull'ingranaggio
+      profileSubscription = supabase
+        .channel('app_admin_profiles_realtime')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'profiles' },
+          () => {
+            fetchPendingCount()
+          }
+        )
+        .subscribe()
+    }
+
+    return () => {
+      if (profileSubscription) {
+        supabase.removeChannel(profileSubscription)
+      }
     }
   }, [session, profile])
 
