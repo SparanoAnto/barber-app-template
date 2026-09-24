@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabaseClient'
 
-// Cache globale temporanea
 let cachedStaffData = {
   barbers: [],
   workingDays: [],
@@ -10,7 +9,7 @@ let cachedStaffData = {
   loaded: false
 }
 
-export function AdminStaff() {
+export function AdminStaff({ salonSettings = {} }) {
   const [barbers, setBarbers] = useState(cachedStaffData.barbers)
   const [selectedBarber, setSelectedBarber] = useState('')
   const [exceptionDate, setExceptionDate] = useState('')
@@ -29,9 +28,7 @@ export function AdminStaff() {
   const [terminationDates, setTerminationDates] = useState({})
   const [loading, setLoading] = useState(!cachedStaffData.loaded)
 
-  // Utilizziamo un ref per evitare fetch multiple simultanee dal Realtime
   const fetchingRef = useRef(false)
-
   const todayString = new Date().toLocaleDateString('sv-SE')
 
   const DAYS_OF_WEEK = [
@@ -44,7 +41,6 @@ export function AdminStaff() {
     { id: 0, label: 'Dom' },
   ]
 
-  // Helper sicuro per calcolare il giorno della settimana da una stringa 'YYYY-MM-DD'
   function getDayOfWeek(dateString) {
     const parts = dateString.split('-')
     if (parts.length !== 3) return new Date(dateString).getDay()
@@ -54,7 +50,6 @@ export function AdminStaff() {
     return new Date(year, month, day).getDay()
   }
 
-  // Helper per ottenere l'etichetta testuale del giorno (Lun, Mar, ecc.)
   function getDayName(dateString) {
     const dayIndex = getDayOfWeek(dateString)
     const found = DAYS_OF_WEEK.find(d => d.id === dayIndex)
@@ -158,7 +153,6 @@ export function AdminStaff() {
     }
   }
 
-  // 1. DISATTIVAZIONE OPERATORE (Solo appuntamenti confermati e futuri)
   async function handleToggleActive(barber) {
     const newStatus = !barber.is_active
     
@@ -186,7 +180,6 @@ export function AdminStaff() {
     if (!error) fetchData(false)
   }
 
-  // 2. DATA FINE RAPPORTO (Solo appuntamenti confermati e futuri)
   async function handleSaveTerminationDate(barberId) {
     const rawVal = terminationDates[barberId]
     const termDate = rawVal && rawVal.trim() !== '' ? rawVal : null
@@ -221,7 +214,6 @@ export function AdminStaff() {
     }
   }
 
-  // 3. RIMOZIONE O AGGIUNTA GIORNO LAVORATIVO (Controllo globale con dettaglio date e giorni)
   async function handleToggleWorkingDay(barberId, dayOfWeek) {
     const exists = workingDays.some(wd => wd.barber_id === barberId && wd.day_of_week === dayOfWeek)
 
@@ -282,7 +274,6 @@ export function AdminStaff() {
     }
   }
 
-  // 4. MODIFICA ORARIO GIORNALERO WORKING DAY (Solo confermati e futuri)
   async function handleUpdateWorkingDayTime(barberId, dayOfWeek, field, value) {
     if (value) {
       const { data: appts } = await supabase
@@ -320,7 +311,6 @@ export function AdminStaff() {
     if (!error) fetchData(false)
   }
 
-  // 5. CHIUSURA COLLETTIVA SALONE (Solo confermati e futuri)
   async function handleAddClosure(e) {
     e.preventDefault()
     if (!closureStartDate || !closureEndDate) {
@@ -373,7 +363,6 @@ export function AdminStaff() {
     if (!error) fetchData(false)
   }
 
-  // 6. ASSENZA O PERMESSO SINGOLO OPERATORE (Solo confermati e futuri)
   async function handleAddException(e) {
     e.preventDefault()
     if (!selectedBarber || !exceptionDate) {
@@ -440,44 +429,56 @@ export function AdminStaff() {
   }
 
   return (
-    <div style={{ position: 'relative', zIndex: 1 }}>
-      <h3 className="section-title">Gestione Staff & Ferie</h3>
+    <div style={{ 
+      position: 'relative', 
+      zIndex: 1,
+      '--primary-color': salonSettings.primary_color || '#2563eb',
+      '--accent-color': salonSettings.accent_color || '#D4AF37',
+      '--secondary-color': salonSettings.secondary_color || '#1E293B',
+      fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+      padding: '4px'
+    }}>
+      {/* Header Sezione */}
+      <div style={{ marginBottom: '24px' }}>
+        <h2 style={{ margin: 0, color: 'var(--secondary-color)', fontSize: '1.35rem', fontWeight: 700 }}>Gestione Staff & Ferie</h2>
+        <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '13px' }}>Pianifica gli orari degli operatori, i giorni di chiusura collettiva e i permessi individuali</p>
+      </div>
 
-      <div className="admin-staff-responsive-grid">
+      <div className="admin-staff-responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px' }}>
         
         {/* COLONNA SINISTRA */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
           {/* Chiusura Collettiva */}
-          <div className="info-card" style={{ marginBottom: 0, borderColor: '#64B5F6' }}>
-            <h4 style={{ color: '#64B5F6', marginTop: 0, marginBottom: '15px' }}>🏖️ Chiusura Collettiva / Ferie Salone</h4>
-            <form onSubmit={handleAddClosure} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'flex', gap: '10px' }}>
+          <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', borderLeft: '4px solid var(--primary-color)', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+            <h3 style={{ color: '#1e293b', marginTop: 0, marginBottom: '18px', fontSize: '1.1rem', fontWeight: 700 }}>🏖️ Chiusura Collettiva / Ferie Salone</h3>
+            <form onSubmit={handleAddClosure} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'flex', gap: '12px' }}>
                 <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Dal giorno:</label>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Dal giorno:</label>
                   <input type="date" min={todayString} value={closureStartDate} onChange={e => setClosureStartDate(e.target.value)} style={inputStyle} />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Al giorno:</label>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Al giorno:</label>
                   <input type="date" min={closureStartDate || todayString} value={closureEndDate} onChange={e => setClosureEndDate(e.target.value)} style={inputStyle} />
                 </div>
               </div>
               <div>
-                <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Motivo:</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Motivo:</label>
                 <input type="text" placeholder="Es. Ferie Estive / Natale" value={closureReason} onChange={e => setClosureReason(e.target.value)} style={inputStyle} />
               </div>
-              <button type="submit" style={{ ...btnStyle, backgroundColor: '#1976D2', marginTop: '5px' }}>
+              <button type="submit" style={{ ...btnStyle, backgroundColor: 'var(--primary-color)', marginTop: '4px', boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)' }}>
                 Registra Chiusura Salone
               </button>
             </form>
 
             {closures.length > 0 && (
-              <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Chiusure attive programmate:</span>
+              <div style={{ marginTop: '18px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: '#64748b' }}>Chiusure attive programmate:</span>
                 {closures.map(c => (
-                  <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', background: 'rgba(0,0,0,0.2)', borderRadius: '6px' }}>
-                    <span style={{ fontSize: '13px' }}><strong>{c.reason}</strong> ({c.start_date} ➔ {c.end_date})</span>
-                    <button onClick={() => handleDeleteClosure(c.id)} style={{ background: 'transparent', border: 'none', color: 'var(--barber-red)', cursor: 'pointer' }}>🗑️</button>
+                  <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <span style={{ fontSize: '13px', color: '#1e293b' }}><strong>{c.reason}</strong> ({c.start_date} ➔ {c.end_date})</span>
+                    <button onClick={() => handleDeleteClosure(c.id)} style={{ background: 'transparent', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '14px' }}>🗑️</button>
                   </div>
                 ))}
               </div>
@@ -485,25 +486,25 @@ export function AdminStaff() {
           </div>
 
           {/* Aggiungi Operatore */}
-          <div className="info-card" style={{ marginBottom: 0 }}>
-            <h4 style={{ color: '#FFF', marginTop: 0, marginBottom: '15px' }}>➕ Aggiungi Nuovo Operatore</h4>
-            <form onSubmit={handleAddBarber} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', borderLeft: '4px solid var(--accent-color)', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+            <h3 style={{ color: '#1e293b', marginTop: 0, marginBottom: '18px', fontSize: '1.1rem', fontWeight: 700 }}>➕ Aggiungi Nuovo Operatore</h3>
+            <form onSubmit={handleAddBarber} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
-                <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Nome Operatore:</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Nome Operatore:</label>
                 <input type="text" placeholder="Es. Marco Rossi" value={newBarberName} onChange={e => setNewBarberName(e.target.value)} style={inputStyle} />
               </div>
-              <button type="submit" style={{ ...btnStyle, backgroundColor: '#2E7D32', marginTop: '5px' }}>
+              <button type="submit" style={{ ...btnStyle, backgroundColor: '#10b981', marginTop: '4px', boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)' }}>
                 Salva Nuovo Operatore
               </button>
             </form>
           </div>
 
           {/* Programma Assenza Singolo */}
-          <div className="info-card" style={{ marginBottom: 0 }}>
-            <h4 style={{ color: '#FFF', marginTop: 0, marginBottom: '15px' }}>📅 Programma Assenza o Permesso Singolo</h4>
-            <form onSubmit={handleAddException} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', borderLeft: '4px solid #ef4444', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+            <h3 style={{ color: '#1e293b', marginTop: 0, marginBottom: '18px', fontSize: '1.1rem', fontWeight: 700 }}>📅 Programma Assenza o Permesso Singolo</h3>
+            <form onSubmit={handleAddException} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
-                <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Operatore:</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Operatore:</label>
                 <select value={selectedBarber} onChange={e => setSelectedBarber(e.target.value)} style={inputStyle}>
                   <option value="">-- Seleziona Operatore --</option>
                   {barbers.map(b => (
@@ -513,27 +514,27 @@ export function AdminStaff() {
               </div>
 
               <div>
-                <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Data:</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Data:</label>
                 <input type="date" min={todayString} value={exceptionDate} onChange={e => setExceptionDate(e.target.value)} style={inputStyle} />
               </div>
 
-              <div style={{ display: 'flex', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '12px' }}>
                 <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Dalle ore (opz.):</label>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Dalle ore (opz.):</label>
                   <input type="time" value={excStartTime} onChange={e => setExcStartTime(e.target.value)} style={inputStyle} />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Alle ore (opz.):</label>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Alle ore (opz.):</label>
                   <input type="time" value={excEndTime} onChange={e => setExcEndTime(e.target.value)} style={inputStyle} />
                 </div>
               </div>
 
               <div>
-                <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Motivo:</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Motivo:</label>
                 <input type="text" placeholder="Es. Permesso medico" value={exceptionReason} onChange={e => setExceptionReason(e.target.value)} style={inputStyle} />
               </div>
 
-              <button type="submit" style={{ ...btnStyle, backgroundColor: 'var(--barber-red)', marginTop: '5px' }}>
+              <button type="submit" style={{ ...btnStyle, backgroundColor: '#ef4444', marginTop: '4px', boxShadow: '0 2px 4px rgba(239, 68, 68, 0.2)' }}>
                 Registra Assenza
               </button>
             </form>
@@ -542,56 +543,56 @@ export function AdminStaff() {
         </div>
 
         {/* COLONNA DESTRA */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
           {/* Configurazione Operatori & Orari Giornalieri */}
-          <div className="info-card" style={{ marginBottom: 0 }}>
-            <h4 style={{ color: '#FFF', marginBottom: '15px', marginTop: 0 }}>⚙️ Configurazione Operatori (Orari & Uscite)</h4>
+          <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', borderLeft: '4px solid var(--secondary-color)', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+            <h3 style={{ color: '#1e293b', marginBottom: '18px', marginTop: 0, fontSize: '1.1rem', fontWeight: 700 }}>⚙️ Configurazione Operatori (Orari & Uscite)</h3>
             {loading && barbers.length === 0 ? (
-              <p style={{ color: 'var(--text-muted)' }}>Caricamento...</p>
+              <div style={{ textAlign: 'center', padding: '20px', color: '#64748b' }}>Caricamento operatori...</div>
             ) : barbers.length === 0 ? (
-              <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Nessun operatore registrato.</p>
+              <div style={{ textAlign: 'center', padding: '20px', color: '#64748b', fontSize: '13px' }}>Nessun operatore registrato.</div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 {barbers.map(b => {
                   return (
-                    <div key={b.id} style={{ padding: '14px', borderRadius: '8px', backgroundColor: 'rgba(0, 0, 0, 0.3)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div key={b.id} style={{ padding: '16px', borderRadius: '10px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                       
                       {/* Intestazione */}
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <strong style={{ color: '#FFF', fontSize: '1.05rem' }}>{b.name}</strong>
-                          <span style={{ fontSize: '11px', marginLeft: '8px', padding: '2px 6px', borderRadius: '4px', backgroundColor: b.is_active ? 'rgba(46, 125, 50, 0.2)' : 'rgba(211, 47, 47, 0.2)', color: b.is_active ? '#81c784' : 'var(--barber-red)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <strong style={{ color: '#1e293b', fontSize: '1rem' }}>{b.name}</strong>
+                          <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '6px', backgroundColor: b.is_active ? '#dcfce7' : '#fee2e2', color: b.is_active ? '#15803d' : '#b91c1c', fontWeight: 600 }}>
                             {b.is_active ? 'Attivo' : 'Disattivato'}
                           </span>
                         </div>
-                        <button onClick={() => handleToggleActive(b)} style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: b.is_active ? 'rgba(211, 47, 47, 0.2)' : 'rgba(46, 125, 50, 0.2)', color: '#FFF', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
+                        <button onClick={() => handleToggleActive(b)} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: b.is_active ? '#fee2e2' : '#dcfce7', color: b.is_active ? '#b91c1c' : '#15803d', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}>
                           {b.is_active ? 'Disattiva' : 'Attiva'}
                         </button>
                       </div>
 
                       {/* Giorni lavorativi e orari specifici */}
                       <div>
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Giorni lavorativi e orari dedicati (opzionali):</span>
+                        <span style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', display: 'block', marginBottom: '8px' }}>Giorni lavorativi e orari dedicati (opzionali):</span>
                         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                           {DAYS_OF_WEEK.map(day => {
                             const wdObj = workingDays.find(wd => wd.barber_id === b.id && wd.day_of_week === day.id)
                             const isWorking = !!wdObj
 
                             return (
-                              <div key={day.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '5px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px', border: '1px solid var(--border-color)', minWidth: '65px', alignItems: 'center' }}>
+                              <div key={day.id} style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '6px', background: '#ffffff', borderRadius: '8px', border: '1px solid #e2e8f0', minWidth: '68px', alignItems: 'center' }}>
                                 <button
                                   type="button"
                                   onClick={() => handleToggleWorkingDay(b.id, day.id)}
                                   style={{
-                                    padding: '3px 6px',
-                                    borderRadius: '4px',
+                                    padding: '4px 6px',
+                                    borderRadius: '6px',
                                     fontSize: '11px',
-                                    fontWeight: 'bold',
+                                    fontWeight: 600,
                                     cursor: 'pointer',
-                                    border: isWorking ? '1px solid #64B5F6' : '1px solid var(--border-color)',
-                                    backgroundColor: isWorking ? 'rgba(25, 118, 210, 0.3)' : 'rgba(20, 20, 20, 0.6)',
-                                    color: isWorking ? '#FFF' : '#777',
+                                    border: isWorking ? '1px solid var(--primary-color)' : '1px solid #cbd5e1',
+                                    backgroundColor: isWorking ? 'var(--primary-color)' : '#f1f5f9',
+                                    color: isWorking ? '#FFF' : '#64748b',
                                     width: '100%'
                                   }}
                                 >
@@ -599,20 +600,20 @@ export function AdminStaff() {
                                 </button>
 
                                 {isWorking && (
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', width: '100%' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', width: '100%' }}>
                                     <input 
                                       type="time" 
                                       value={wdObj.start_time || ''} 
                                       onChange={(e) => handleUpdateWorkingDayTime(b.id, day.id, 'start_time', e.target.value)}
                                       title="Inizio (lascia vuoto per default salone)"
-                                      style={{ ...inputStyle, padding: '2px', fontSize: '9px', height: '20px', textAlign: 'center', width: '100%' }} 
+                                      style={{ ...inputStyle, padding: '3px', fontSize: '10px', height: '22px', textAlign: 'center', width: '100%' }} 
                                     />
                                     <input 
                                       type="time" 
                                       value={wdObj.end_time || ''} 
                                       onChange={(e) => handleUpdateWorkingDayTime(b.id, day.id, 'end_time', e.target.value)}
                                       title="Fine (lascia vuoto per default salone)"
-                                      style={{ ...inputStyle, padding: '2px', fontSize: '9px', height: '20px', textAlign: 'center', width: '100%' }} 
+                                      style={{ ...inputStyle, padding: '3px', fontSize: '10px', height: '22px', textAlign: 'center', width: '100%' }} 
                                     />
                                   </div>
                                 )}
@@ -623,22 +624,22 @@ export function AdminStaff() {
                       </div>
 
                       {/* Data fine rapporto */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', marginTop: '4px' }}>
                         <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '2px' }}>Data Uscita / Fine Rapporto (Opzionale):</label>
+                          <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', display: 'block', marginBottom: '4px' }}>Data Uscita / Fine Rapporto (Opzionale):</label>
                           <div style={{ display: 'flex', gap: '6px' }}>
                             <input 
                               type="date" 
                               value={terminationDates[b.id] !== undefined ? terminationDates[b.id] : (b.termination_date || '')} 
                               onChange={(e) => setTerminationDates({ ...terminationDates, [b.id]: e.target.value })} 
-                              style={{ ...inputStyle, padding: '8px 10px', fontSize: '12px', flex: 1 }} 
+                              style={{ ...inputStyle, padding: '9px 12px', fontSize: '12px', flex: 1 }} 
                             />
                             {(terminationDates[b.id] || b.termination_date) && (
                               <button 
                                 type="button" 
                                 onClick={() => setTerminationDates({ ...terminationDates, [b.id]: '' })}
                                 title="Cancella data"
-                                style={{ padding: '0 10px', backgroundColor: 'rgba(211, 47, 47, 0.2)', border: '1px solid var(--border-color)', borderRadius: '6px', color: 'var(--barber-red)', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' }}
+                                style={{ padding: '0 10px', backgroundColor: '#fee2e2', border: '1px solid #cbd5e1', borderRadius: '8px', color: '#b91c1c', cursor: 'pointer', fontSize: '14px', fontWeight: 600 }}
                               >
                                 ✕
                               </button>
@@ -648,7 +649,7 @@ export function AdminStaff() {
                         <button 
                           type="button" 
                           onClick={() => handleSaveTerminationDate(b.id)}
-                          style={{ padding: '8px 12px', marginTop: '16px', backgroundColor: '#333', border: '1px solid var(--border-color)', borderRadius: '6px', color: '#FFF', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}
+                          style={{ padding: '9px 14px', backgroundColor: '#334155', border: '1px solid #cbd5e1', borderRadius: '8px', color: '#FFF', fontSize: '12px', cursor: 'pointer', fontWeight: 600, height: '38px' }}
                         >
                           Salva Uscita
                         </button>
@@ -662,24 +663,26 @@ export function AdminStaff() {
           </div>
 
           {/* Lista Assenze Future */}
-          <div>
-            <h4 style={{ color: '#FFF', marginBottom: '10px', marginTop: 0 }}>Assenze Individuali Programmate</h4>
+          <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+            <h3 style={{ color: '#1e293b', marginBottom: '14px', marginTop: 0, fontSize: '1.1rem', fontWeight: 700 }}>Assenze Individuali Programmate</h3>
             {loading && exceptions.length === 0 ? (
-              <p style={{ color: 'var(--text-muted)' }}>Caricamento...</p>
+              <div style={{ textAlign: 'center', padding: '20px', color: '#64748b' }}>Caricamento assenze...</div>
             ) : exceptions.length === 0 ? (
-              <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Nessuna assenza futura.</p>
+              <div style={{ textAlign: 'center', padding: '20px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1', color: '#64748b', fontSize: '13px' }}>
+                Nessuna assenza futura registrata.
+              </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {exceptions.map(exc => (
-                  <div key={exc.id} style={{ padding: '12px 14px', borderRadius: '8px', backgroundColor: 'rgba(24, 24, 24, 0.85)', border: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div key={exc.id} style={{ padding: '12px 14px', borderRadius: '8px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
                     <div>
-                      <strong style={{ color: '#FFF' }}>{exc.barbers?.name || 'Operatore'}</strong>
-                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      <strong style={{ color: '#1e293b', fontSize: '0.95rem' }}>{exc.barbers?.name || 'Operatore'}</strong>
+                      <div style={{ fontSize: '12px', color: '#64748b', marginTop: '3px' }}>
                         📅 {exc.date} ({getDayName(exc.date)}) {exc.start_time && exc.end_time ? `🕒 ${exc.start_time.slice(0,5)} - ${exc.end_time.slice(0,5)}` : '(Tutto il giorno)'}
                       </div>
-                      <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>Note: {exc.reason}</div>
+                      <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>Note: {exc.reason}</div>
                     </div>
-                    <button onClick={() => handleDeleteException(exc.id)} style={{ background: 'transparent', border: 'none', color: 'var(--barber-red)', cursor: 'pointer', fontWeight: 'bold' }}>🗑️</button>
+                    <button onClick={() => handleDeleteException(exc.id)} style={{ background: 'transparent', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '14px' }}>🗑️</button>
                   </div>
                 ))}
               </div>
@@ -695,23 +698,25 @@ export function AdminStaff() {
 
 const inputStyle = {
   width: '100%',
-  padding: '10px 12px',
-  borderRadius: '6px',
-  border: '1px solid var(--border-color)',
-  backgroundColor: 'rgba(15, 15, 15, 0.8)',
-  color: '#FFF',
+  padding: '11px 14px',
+  borderRadius: '8px',
+  border: '1px solid #cbd5e1',
+  backgroundColor: '#f8fafc',
+  color: '#1e293b',
   boxSizing: 'border-box',
   fontSize: '14px',
-  outline: 'none'
+  outline: 'none',
+  transition: 'border-color 0.2s'
 }
 
 const btnStyle = {
   width: '100%',
-  padding: '12px',
-  borderRadius: '6px',
+  padding: '11px 16px',
+  borderRadius: '8px',
   border: 'none',
   color: '#FFF',
-  fontWeight: 'bold',
+  fontWeight: 600,
   cursor: 'pointer',
-  fontSize: '14px'
+  fontSize: '13px',
+  transition: 'background 0.2s'
 }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 
-export function AdminReports({ isOwner = false }) {
+export function AdminReports({ isOwner = false, salonSettings = {} }) {
   const [loading, setLoading] = useState(true)
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const d = new Date()
@@ -13,7 +13,7 @@ export function AdminReports({ isOwner = false }) {
     totalRevenue: 0,
     averageTicket: 0,
     totalRetailRevenue: 0,
-    uniqueClients: 0,
+    completedVisits: 0,
     barberRevenue: [], 
     serviceBreakdown: [] 
   })
@@ -29,19 +29,24 @@ export function AdminReports({ isOwner = false }) {
   async function fetchReportData() {
     setLoading(true)
 
-    const [year, month] = selectedMonth.split('-')
-    const lastDay = new Date(year, month, 0).getDate()
+    const [year, month] = selectedMonth.split('-').map(Number)
     
-    // Margini di data precisi basati sul formato YYYY-MM-DD
+    // Inizio del mese corrente (es. 2026-09-01)
     const startOfPeriod = `${selectedMonth}-01`
-    const endOfPeriod = `${selectedMonth}-${String(lastDay).padStart(2, '0')}`
+    
+    // Calcolo sicuro del primo giorno del mese successivo
+    const nextMonthDate = new Date(year, month, 1)
+    const nextYear = nextMonthDate.getFullYear()
+    const nextMonthStr = String(nextMonthDate.getMonth() + 1).padStart(2, '0')
+    const startOfNextPeriod = `${nextYear}-${nextMonthStr}-01`
 
     try {
-      const { data: appointments, error: appError } = await supabase
+      const { data: rawAppointments, error: appError } = await supabase
         .from('appointments')
         .select(`
           id,
           appointment_date,
+          start_time,
           total_price,
           user_id,
           custom_client_name,
@@ -54,15 +59,43 @@ export function AdminReports({ isOwner = false }) {
           )
         `)
         .gte('appointment_date', startOfPeriod)
-        .lte('appointment_date', endOfPeriod)
+        .lt('appointment_date', startOfNextPeriod)
         .neq('status', 'cancelled')
 
       if (appError) throw appError
 
+      // FILTRAGGIO DINAMICO: Escludiamo gli appuntamenti futuri rispetto a data e ora attuali
+      const now = new Date()
+      const todayStr = now.toLocaleDateString('sv-SE') // Formato YYYY-MM-DD locale
+      const currentHours = now.getHours()
+      const currentMinutes = now.getMinutes()
+      const currentTimeValue = currentHours * 60 + currentMinutes
+
+      const appointments = (rawAppointments || []).filter(app => {
+        if (!app.appointment_date) return false
+
+        // Se la data è nel passato rispetto a oggi, è valida
+        if (app.appointment_date < todayStr) return true
+
+        // Se la data è futura rispetto a oggi, la scartiamo completamente
+        if (app.appointment_date > todayStr) return false
+
+        // Se ci troviamo esattamente nel giorno odierno, confrontiamo gli orari (start_time)
+        if (app.appointment_date === todayStr) {
+          if (!app.start_time) return true // Se non c'è orario per sicurezza lo includiamo o escludiamo (qui incluso)
+          const [h, m] = app.start_time.split(':').map(Number)
+          const appTimeValue = h * 60 + m
+          // Consideriamo valido solo se l'orario d'inizio è minore o uguale all'orario attuale
+          return appTimeValue <= currentTimeValue
+        }
+
+        return false
+      })
+
       if (!appointments || appointments.length === 0) {
         setStats({
           totalAppointments: 0, totalRevenue: 0, averageTicket: 0, totalRetailRevenue: 0,
-          uniqueClients: 0, barberRevenue: [], serviceBreakdown: []
+          completedVisits: 0, barberRevenue: [], serviceBreakdown: []
         })
         setLoading(false)
         return
@@ -73,10 +106,11 @@ export function AdminReports({ isOwner = false }) {
       
       const averageTicket = totalAppointments > 0 ? totalRevenue / totalAppointments : 0
 
+      // I passaggi effettuati corrispondono al totale degli appuntamenti validi passati/in corso del mese
+      const completedVisits = totalAppointments
+
       let totalRetailRevenue = 0
       const serviceMap = {}
-
-      // Mappa per tracciare le performance di rivendita per operatore
       const barberMap = {}
 
       appointments.forEach(app => {
@@ -125,24 +159,9 @@ export function AdminReports({ isOwner = false }) {
         }))
         .sort((a, b) => b.total - a.total)
 
-      const clientCounts = {}
-      appointments.forEach(app => {
-        let clientName = ''
-        if (app.custom_client_name) {
-          clientName = `${app.custom_client_name} (Manuale)`
-        } else if (app.profiles) {
-          const fullName = `${app.profiles.first_name || ''} ${app.profiles.last_name || ''}`.trim()
-          clientName = fullName || app.profiles.email || 'Cliente Senza Nome'
-        } else {
-          clientName = 'Cliente Anonimo'
-        }
-        clientCounts[clientName] = true
-      })
-      const uniqueClients = Object.keys(clientCounts).length
-
       setStats({
         totalAppointments, totalRevenue, averageTicket, totalRetailRevenue,
-        uniqueClients, barberRevenue, serviceBreakdown
+        completedVisits, barberRevenue, serviceBreakdown
       })
 
     } catch (err) {
@@ -155,78 +174,95 @@ export function AdminReports({ isOwner = false }) {
   const maxBarberRevenue = stats.barberRevenue.length > 0 ? stats.barberRevenue[0].total : 1
 
   return (
-    <div className="booking-container">
-      <h2 className="section-title">📊 Report & Statistiche</h2>
+    <div 
+      style={{
+        position: 'relative',
+        zIndex: 1,
+        '--primary-color': salonSettings.primary_color || '#2563eb',
+        '--accent-color': salonSettings.accent_color || '#D4AF37',
+        '--secondary-color': salonSettings.secondary_color || '#1E293B',
+        fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+        padding: '4px'
+      }}
+    >
+      {/* Header Sezione */}
+      <div style={{ marginBottom: '24px' }}>
+        <h2 style={{ margin: 0, color: 'var(--secondary-color)', fontSize: '1.35rem', fontWeight: 700 }}>📊 Report & Statistiche</h2>
+        <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '13px' }}>Analizza le performance finanziarie, la produttività dello staff e l'andamento dei servizi fino ad ora</p>
+      </div>
 
-      <div className="info-card" style={{ marginBottom: '20px' }}>
-        <label style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>
-          Seleziona Mese:
+      {/* Selettore Mese */}
+      <div style={{ marginBottom: '24px', backgroundColor: '#ffffff', borderRadius: '12px', padding: '20px', border: '1px solid #e2e8f0', borderLeft: '4px solid var(--primary-color)', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+        <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '8px' }}>
+          Seleziona Mese di Riferimento:
         </label>
         <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} style={inputStyle} />
       </div>
 
       {loading ? (
-        <p style={{ color: 'var(--text-muted)', textAlign: 'center' }}>Caricamento dati...</p>
+        <div style={{ textAlign: 'center', padding: '40px', color: '#64748b', fontSize: '14px' }}>Caricamento dati in corso...</div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
+          {/* Griglia KPI / Statistiche */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
             {isOwner && (
-              <div className="info-card" style={statCardStyle}>
+              <div style={{ ...statCardStyle, borderLeft: '4px solid #16a34a' }}>
                 <span style={statIconStyle}>💰</span>
                 <span style={statLabelStyle}>Incasso Totale</span>
-                <strong style={{ ...statValueStyle, color: '#66BB6A' }}>{formatCurrency(stats.totalRevenue)}</strong>
+                <strong style={{ ...statValueStyle, color: '#16a34a' }}>{formatCurrency(stats.totalRevenue)}</strong>
               </div>
             )}
 
-            <div className="info-card" style={statCardStyle}>
+            <div style={{ ...statCardStyle, borderLeft: '4px solid var(--primary-color)' }}>
               <span style={statIconStyle}>🎟️</span>
-              <span style={statLabelStyle}>Fiches Media</span>
-              <strong style={{ ...statValueStyle, color: '#64B5F6' }}>{formatCurrency(stats.averageTicket)}</strong>
+              <span style={statLabelStyle}>Scontrino Medio</span>
+              <strong style={{ ...statValueStyle, color: 'var(--primary-color)' }}>{formatCurrency(stats.averageTicket)}</strong>
             </div>
 
-            <div className="info-card" style={statCardStyle}>
+            <div style={{ ...statCardStyle, borderLeft: '4px solid var(--accent-color)' }}>
               <span style={statIconStyle}>🛍️</span>
               <span style={statLabelStyle}>Rivendita Mese</span>
-              <strong style={{ ...statValueStyle, color: '#FFD700' }}>{formatCurrency(stats.totalRetailRevenue)}</strong>
+              <strong style={{ ...statValueStyle, color: '#ca8a04' }}>{formatCurrency(stats.totalRetailRevenue)}</strong>
             </div>
 
-            <div className="info-card" style={statCardStyle}>
-              <span style={statIconStyle}>👥</span>
-              <span style={statLabelStyle}>Clienti Serviti</span>
-              <strong style={statValueStyle}>{stats.uniqueClients}</strong>
+            <div style={{ ...statCardStyle, borderLeft: '4px solid #64748b' }}>
+              <span style={statIconStyle}>✂️</span>
+              <span style={statLabelStyle}>Passaggi Effettuati</span>
+              <strong style={{ ...statValueStyle, color: '#1e293b' }}>{stats.completedVisits}</strong>
             </div>
           </div>
 
-          <div className="info-card">
+          {/* Produttività Operatori */}
+          <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
             <h3 style={sectionHeaderStyle}>💈 Produttività Operatori & Rivendite</h3>
             {stats.barberRevenue.length === 0 ? (
-              <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>Nessun dato per questo mese.</p>
+              <p style={{ color: '#64748b', fontSize: '13px', margin: 0 }}>Nessun dato disponibile per questo mese fino ad ora.</p>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                 {stats.barberRevenue.map((barber, index) => {
                   const percentage = maxBarberRevenue > 0 ? (barber.total / maxBarberRevenue) * 100 : 0
                   const isTop = index === 0
 
                   return (
-                    <div key={barber.name} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div key={barber.name} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
-                          <strong style={{ color: '#FFF', fontSize: '0.95rem' }}>
+                          <strong style={{ color: '#1e293b', fontSize: '0.95rem' }}>
                             {isTop && '👑 '} {barber.name}
                           </strong>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '8px' }}>
-                            ({barber.retailCount} prodotti venduti | Incasso prodotti: {formatCurrency(barber.retailTotal)})
+                          <span style={{ fontSize: '12px', color: '#64748b', marginLeft: '8px' }}>
+                            ({barber.retailCount} prodotti | Incasso prod: {formatCurrency(barber.retailTotal)})
                           </span>
                         </div>
                         {isOwner ? (
-                          <strong style={{ color: '#66BB6A', fontSize: '1.05rem' }}>{formatCurrency(barber.total)}</strong>
+                          <strong style={{ color: '#16a34a', fontSize: '1.05rem' }}>{formatCurrency(barber.total)}</strong>
                         ) : (
-                          <span style={{ color: '#FFD700', fontWeight: 'bold', fontSize: '0.9rem' }}>{barber.retailCount} prod.</span>
+                          <span style={{ color: '#ca8a04', fontWeight: 'bold', fontSize: '0.9rem' }}>{barber.retailCount} prod.</span>
                         )}
                       </div>
-                      <div style={{ width: '100%', height: '6px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
-                        <div style={{ width: `${percentage}%`, height: '100%', backgroundColor: isTop ? '#66BB6A' : 'var(--barber-blue)', borderRadius: '3px', transition: 'width 0.4s ease' }} />
+                      <div style={{ width: '100%', height: '8px', backgroundColor: '#f1f5f9', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ width: `${percentage}%`, height: '100%', backgroundColor: isTop ? '#16a34a' : 'var(--primary-color)', borderRadius: '4px', transition: 'width 0.4s ease' }} />
                       </div>
                     </div>
                   )
@@ -235,29 +271,30 @@ export function AdminReports({ isOwner = false }) {
             )}
           </div>
 
-          <div className="info-card">
-            <h3 style={sectionHeaderStyle}>✂️ Servizi & Prodotti (Rivendita / Sconti)</h3>
+          {/* Servizi & Prodotti */}
+          <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+            <h3 style={sectionHeaderStyle}>✂️ Servizi & Prodotti (Rivendita)</h3>
             {stats.serviceBreakdown.length === 0 ? (
-              <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>Nessun servizio o prodotto registrato questo mese.</p>
+              <p style={{ color: '#64748b', fontSize: '13px', margin: 0 }}>Nessun servizio o prodotto registrato questo mese fino ad ora.</p>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 {stats.serviceBreakdown.map((item) => (
                   <div key={item.name} style={listRowStyle}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span>{item.isRetail ? '🧴' : '✂️'}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span style={{ fontSize: '18px' }}>{item.isRetail ? '🧴' : '✂️'}</span>
                       <div>
-                        <strong style={{ color: '#FFF', fontSize: '0.95rem', display: 'block' }}>{item.name}</strong>
-                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                          {item.count} {item.count === 1 ? 'volta' : 'volte'} eseguito
+                        <strong style={{ color: '#1e293b', fontSize: '0.95rem', display: 'block' }}>{item.name}</strong>
+                        <span style={{ fontSize: '12px', color: '#64748b' }}>
+                          Eseguito {item.count} {item.count === 1 ? 'volta' : 'volte'}
                         </span>
                       </div>
                     </div>
                     {isOwner ? (
-                      <strong style={{ color: item.isRetail ? '#FFD700' : '#64B5F6', fontSize: '1rem' }}>
+                      <strong style={{ color: item.isRetail ? '#ca8a04' : 'var(--primary-color)', fontSize: '1rem' }}>
                         {formatCurrency(item.totalRevenue)}
                       </strong>
                     ) : (
-                      <span style={{ color: '#64B5F6', fontWeight: 'bold', fontSize: '0.9rem' }}>
+                      <span style={{ color: 'var(--primary-color)', fontWeight: 'bold', fontSize: '0.9rem' }}>
                         {item.count} v.
                       </span>
                     )}
@@ -273,10 +310,64 @@ export function AdminReports({ isOwner = false }) {
   )
 }
 
-const inputStyle = { width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'rgba(24, 24, 24, 0.85)', color: '#FFF', fontSize: '14px', outline: 'none', boxSizing: 'border-box', colorScheme: 'dark' }
-const statCardStyle = { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '16px 12px' }
-const statIconStyle = { fontSize: '24px', marginBottom: '6px' }
-const statLabelStyle = { fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }
-const statValueStyle = { fontSize: '1.4rem', color: '#FFFFFF' }
-const sectionHeaderStyle = { fontSize: '1.0rem', color: '#FFF', marginTop: 0, marginBottom: '15px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }
-const listRowStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }
+const inputStyle = { 
+  width: '100%', 
+  padding: '11px 14px', 
+  borderRadius: '8px', 
+  border: '1px solid #cbd5e1', 
+  backgroundColor: '#f8fafc', 
+  color: '#1e293b', 
+  fontSize: '14px', 
+  outline: 'none', 
+  boxSizing: 'border-box',
+  transition: 'border-color 0.2s'
+}
+
+const statCardStyle = { 
+  display: 'flex', 
+  flexDirection: 'column', 
+  alignItems: 'flex-start', 
+  backgroundColor: '#ffffff', 
+  border: '1px solid #e2e8f0', 
+  borderRadius: '12px', 
+  padding: '20px', 
+  boxShadow: '0 1px 3px rgba(0,0,0,0.02)' 
+}
+
+const statIconStyle = { 
+  fontSize: '22px', 
+  marginBottom: '10px' 
+}
+
+const statLabelStyle = { 
+  fontSize: '11px', 
+  fontWeight: 600, 
+  color: '#64748b', 
+  textTransform: 'uppercase', 
+  letterSpacing: '0.5px', 
+  marginBottom: '4px' 
+}
+
+const statValueStyle = { 
+  fontSize: '1.35rem',
+  fontWeight: 700
+}
+
+const sectionHeaderStyle = { 
+  fontSize: '1.1rem', 
+  color: '#1e293b', 
+  marginTop: 0, 
+  marginBottom: '18px', 
+  borderBottom: '1px solid #e2e8f0', 
+  paddingBottom: '12px',
+  fontWeight: 700
+}
+
+const listRowStyle = { 
+  display: 'flex', 
+  justifyContent: 'space-between', 
+  alignItems: 'center', 
+  padding: '12px 8px', 
+  borderBottom: '1px solid #f1f5f9',
+  borderRadius: '6px'
+}

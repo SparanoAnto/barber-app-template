@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 
-export function AdminClosures() {
+export function AdminClosures({ salonSettings = {} }) {
   const [closures, setClosures] = useState([])
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -19,7 +19,7 @@ export function AdminClosures() {
     const { data } = await supabase
       .from('shop_closures')
       .select('*')
-      .gte('end_date', todayString) // Mostra solo le chiusure future o in corso
+      .gte('end_date', todayString)
       .order('start_date', { ascending: true })
 
     if (data) setClosures(data)
@@ -66,16 +66,38 @@ export function AdminClosures() {
   }
 
   return (
-    <div>
-      <h3 className="section-title">Chiusure Collettive e Ferie Salone</h3>
+    <div style={{
+      position: 'relative',
+      zIndex: 1,
+      '--primary-color': salonSettings.primary_color || '#2563eb',
+      '--accent-color': salonSettings.accent_color || '#D4AF37',
+      '--secondary-color': salonSettings.secondary_color || '#1E293B',
+      fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+      padding: '4px'
+    }}>
+      {/* Header Sezione */}
+      <div style={{ marginBottom: '24px' }}>
+        <h2 style={{ margin: 0, color: 'var(--secondary-color)', fontSize: '1.35rem', fontWeight: 700 }}>Chiusure Collettive e Ferie Salone</h2>
+        <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '13px' }}>Pianifica i periodi di chiusura straordinaria o collettiva dell'attività</p>
+      </div>
 
-      {/* Form inserimento chiusura */}
-      <div className="info-card" style={{ marginBottom: '25px', borderColor: 'var(--barber-blue)' }}>
-        <h4 style={{ color: '#64B5F6', marginTop: 0, marginBottom: '15px' }}>📅 Programma Chiusura Salone</h4>
-        <form onSubmit={handleAddClosure} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <div style={{ flex: 1 }}>
-              <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Dal giorno:</label>
+      {/* Form Inserimento Chiusura */}
+      <div 
+        style={{ 
+          marginBottom: '28px', 
+          borderLeft: '4px solid var(--primary-color)',
+          backgroundColor: '#ffffff',
+          borderRadius: '12px',
+          padding: '24px',
+          border: '1px solid #e2e8f0',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+        }}
+      >
+        <h3 style={{ color: '#1e293b', marginTop: 0, marginBottom: '18px', fontSize: '1.1rem', fontWeight: 700 }}>📅 Programma Chiusura Salone</h3>
+        <form onSubmit={handleAddClosure} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: '160px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Dal giorno:</label>
               <input 
                 type="date" 
                 min={todayString}
@@ -84,8 +106,8 @@ export function AdminClosures() {
                 style={inputStyle} 
               />
             </div>
-            <div style={{ flex: 1 }}>
-              <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Al giorno (incluso):</label>
+            <div style={{ flex: 1, minWidth: '160px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Al giorno (incluso):</label>
               <input 
                 type="date" 
                 min={startDate || todayString}
@@ -97,7 +119,7 @@ export function AdminClosures() {
           </div>
 
           <div>
-            <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Motivo (es. Ferie Estive, Natale):</label>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Motivo (es. Ferie Estive, Natale):</label>
             <input 
               type="text" 
               placeholder="Es. Ferie Estive" 
@@ -107,39 +129,42 @@ export function AdminClosures() {
             />
           </div>
 
-          <button type="submit" style={{ ...btnStyle, backgroundColor: 'var(--barber-blue)', marginTop: '5px' }}>
+          <button type="submit" style={{ ...btnStyle, backgroundColor: 'var(--primary-color)', marginTop: '4px', boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)' }}>
             Salva Chiusura Collettiva
           </button>
         </form>
       </div>
 
-      {/* Lista chiusure programmate */}
-      <h4 style={{ color: '#FFF', marginBottom: '10px' }}>Periodi di Chiusura Attivi</h4>
+      {/* Lista Chiusure Programmate */}
+      <h3 style={{ color: '#1e293b', marginBottom: '14px', fontSize: '1.1rem', fontWeight: 700 }}>Periodi di Chiusura Attivi</h3>
       {loading ? (
-        <p style={{ color: 'var(--text-muted)' }}>Caricamento...</p>
+        <div style={{ textAlign: 'center', padding: '24px', color: '#64748b', fontSize: '13px' }}>Caricamento chiusure...</div>
       ) : closures.length === 0 ? (
-        <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Nessuna chiusura collettiva programmata.</p>
+        <div style={{ textAlign: 'center', padding: '24px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px dashed #cbd5e1', color: '#64748b', fontSize: '13px' }}>
+          Nessuna chiusura collettiva programmata al momento.
+        </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {closures.map(c => (
             <div key={c.id} style={{
-              padding: '12px 14px',
-              borderRadius: '8px',
-              backgroundColor: 'rgba(24, 24, 24, 0.85)',
-              border: '1px solid var(--border-color)',
+              padding: '16px',
+              borderRadius: '12px',
+              backgroundColor: '#ffffff',
+              border: '1px solid #e2e8f0',
               display: 'flex',
               justifyContent: 'space-between',
-              alignItems: 'center'
+              alignItems: 'center',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
             }}>
               <div>
-                <strong style={{ color: '#FFF' }}>{c.reason}</strong>
-                <div style={{ fontSize: '12px', color: '#64B5F6', marginTop: '2px' }}>
+                <strong style={{ color: '#1e293b', fontSize: '0.95rem' }}>{c.reason}</strong>
+                <div style={{ fontSize: '12px', color: 'var(--primary-color)', marginTop: '4px', fontWeight: 600 }}>
                   🏖️ Dal {formatDate(c.start_date)} al {formatDate(c.end_date)}
                 </div>
               </div>
               <button 
                 onClick={() => handleDeleteClosure(c.id)}
-                style={{ background: 'transparent', border: 'none', color: 'var(--barber-red)', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' }}
+                style={{ background: 'transparent', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '14px', fontWeight: 600, padding: '6px' }}
               >
                 🗑️ Elimina
               </button>
@@ -153,24 +178,25 @@ export function AdminClosures() {
 
 const inputStyle = {
   width: '100%',
-  padding: '10px 12px',
-  borderRadius: '6px',
-  border: '1px solid var(--border-color)',
-  backgroundColor: 'rgba(15, 15, 15, 0.8)',
-  color: '#FFF',
+  padding: '11px 14px',
+  borderRadius: '8px',
+  border: '1px solid #cbd5e1',
+  backgroundColor: '#f8fafc',
+  color: '#1e293b',
   boxSizing: 'border-box',
   fontSize: '14px',
   outline: 'none',
-  colorScheme: 'dark'
+  transition: 'border-color 0.2s'
 }
 
 const btnStyle = {
   width: '100%',
-  padding: '12px',
-  borderRadius: '6px',
+  padding: '11px 16px',
+  borderRadius: '8px',
   border: 'none',
   color: '#FFF',
-  fontWeight: 'bold',
+  fontWeight: 600,
   cursor: 'pointer',
-  fontSize: '14px'
+  fontSize: '13px',
+  transition: 'background 0.2s'
 }

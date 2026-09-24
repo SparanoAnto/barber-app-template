@@ -1,8 +1,12 @@
 import React from 'react'
 
-export function Navigation({ activeTab, setActiveTab, isAdmin, pendingCount }) {
+export function Navigation({ activeTab, setActiveTab, isAdmin, pendingCount, salonSettings = {} }) {
   return (
-    <nav style={navBarStyle} aria-label="Navigazione principale">
+    <nav style={{
+      ...navBarStyle,
+      '--primary-color': salonSettings.primary_color || '#2563eb',
+      '--accent-color': salonSettings.accent_color || '#D4AF37',
+    }} aria-label="Navigazione principale">
       <button 
         onClick={() => setActiveTab('info')} 
         style={navBtnStyle(activeTab === 'info')}
@@ -67,29 +71,31 @@ const navBarStyle = {
   transform: 'translateX(-50%)',
   width: '100%',
   maxWidth: '480px', 
-  backgroundColor: 'rgba(18, 18, 18, 0.95)', 
-  backdropFilter: 'blur(10px)',
-  WebkitBackdropFilter: 'blur(10px)',
-  borderTop: '1px solid var(--border-color)', 
+  backgroundColor: 'rgba(255, 255, 255, 0.92)', 
+  backdropFilter: 'blur(12px)',
+  WebkitBackdropFilter: 'blur(12px)',
+  borderTop: '1px solid #e2e8f0', 
   display: 'flex', 
   justifyContent: 'space-around', 
   alignItems: 'center',
   paddingTop: '8px',
   paddingBottom: 'calc(8px + env(safe-area-inset-bottom))', 
   boxSizing: 'border-box',
-  zIndex: 1000
+  zIndex: 1000,
+  boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.06)',
+  fontFamily: 'Inter, system-ui, -apple-system, sans-serif'
 }
 
 const navBtnStyle = (isActive) => ({ 
   background: 'none', 
   border: 'none', 
-  color: isActive ? 'var(--barber-red)' : 'var(--text-muted)', 
+  color: isActive ? 'var(--primary-color)' : '#64748b', 
   fontSize: '11px', 
-  fontWeight: isActive ? 'bold' : '500', 
+  fontWeight: isActive ? '700' : '500', 
   cursor: 'pointer', 
   textAlign: 'center',
   flex: 1,
-  padding: '4px 0',
+  padding: '6px 0',
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
@@ -102,21 +108,21 @@ const navBtnStyle = (isActive) => ({
 const iconStyle = (isActive) => ({
   fontSize: '18px',
   display: 'block',
-  marginBottom: '2px',
+  marginBottom: '3px',
   transform: isActive ? 'scale(1.15)' : 'scale(1)',
   transition: 'transform 0.2s ease'
 })
 
 const badgeStyle = {
   position: 'absolute',
-  top: '0px',
-  right: '15%',
-  backgroundColor: 'var(--barber-red)',
+  top: '4px',
+  right: '22%',
+  backgroundColor: 'var(--accent-color, #2563eb)',
   color: '#ffffff',
   fontSize: '10px',
   fontWeight: 'bold',
   borderRadius: '10px',
-  padding: '2px 6px',
-  border: '2px solid #121212',
-  boxShadow: '0 2px 4px rgba(0,0,0,0.5)'
+  padding: '1px 5px',
+  border: '2px solid #ffffff',
+  boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
 }

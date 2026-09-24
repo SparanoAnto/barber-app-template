@@ -21,7 +21,6 @@ export function Auth({
   const [phone, setPhone] = useState('')
   const [age, setAge] = useState('')
   
-  // Stati per la Privacy
   const [privacyAccepted, setPrivacyAccepted] = useState(false)
   const [showPrivacyModal, setShowPrivacyModal] = useState(false)
 
@@ -33,9 +32,6 @@ export function Auth({
     setIsResettingPassword(isResettingPasswordProps)
   }, [isResettingPasswordProps])
 
-  /**
-   * Helper per tradurre in modo chiaro i messaggi di errore di Supabase in italiano
-   */
   function translateAuthError(message) {
     if (!message) return "Si è verificato un errore imprevisto."
     const lowerMsg = message.toLowerCase()
@@ -59,7 +55,7 @@ export function Auth({
       return "L'indirizzo email inserito non è valido."
     }
 
-    return message // Fallback al messaggio originale se non mappato
+    return message
   }
 
   async function handleLogin(e) {
@@ -68,11 +64,32 @@ export function Auth({
     setAuthSuccess('')
     setLoading(true)
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) {
-      setAuthError(translateAuthError(error.message))
+    try {
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password })
+      
+      if (authError) {
+        throw new Error(authError.message)
+      }
+
+      if (authData?.user) {
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('is_active')
+          .eq('id', authData.user.id)
+          .single()
+
+        if (profileError || (profileData && profileData.is_active === false)) {
+          await supabase.auth.signOut()
+          setAuthError("Il tuo account è stato disattivato dall'amministratore. Contatta il salone per maggiori informazioni.")
+          setLoading(false)
+          return
+        }
+      }
+    } catch (err) {
+      setAuthError(translateAuthError(err.message))
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   async function handleForgotPassword(e) {
@@ -81,17 +98,41 @@ export function Auth({
     setAuthSuccess('')
     setLoading(true)
 
-    const siteUrl = window.location.origin
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: siteUrl,
-    })
+    try {
+      // 1. Controllo preliminare: verifichiamo se l'email esiste nella tabella profiles
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', email)
+        .maybeSingle()
 
-    if (error) {
-      setAuthError(translateAuthError(error.message))
-    } else {
+      if (profileError) {
+        throw new Error("Errore durante la verifica dell'email.")
+      }
+
+      // Se l'email non è associata a nessun profilo nel database
+      if (!profileData) {
+        setAuthError("L'indirizzo email inserito non risulta registrato. Verifica i dati o procedi con la registrazione.")
+        setLoading(false)
+        return
+      }
+
+      // 2. Se l'email esiste, procediamo con l'invio sicuro del link tramite Supabase Auth
+      const siteUrl = window.location.origin
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: siteUrl,
+      })
+
+      if (resetError) {
+        throw new Error(resetError.message)
+      }
+
       setAuthSuccess('Ti abbiamo inviato un\'email con il link sicuro per reimpostare la password.')
+    } catch (err) {
+      setAuthError(translateAuthError(err.message))
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   async function handleUpdatePassword(e) {
@@ -151,187 +192,188 @@ export function Auth({
     }
   }
 
-  if (isResettingPassword) {
-    return (
-      <div className="app-container" style={{ padding: '30px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-        <div className="info-card">
-          <h2 style={{ textAlign: 'center', color: '#FFFFFF', marginTop: '10px' }}>Nuova Password</h2>
-          <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '14px', marginBottom: '15px' }}>
-            Inserisci la nuova password per il tuo account.
-          </p>
-          {authError && <div style={errorBoxStyle}>{authError}</div>}
-          <form onSubmit={handleUpdatePassword} style={formStyle}>
-            <input 
-              type="password" 
-              placeholder="Nuova Password (min. 6 caratteri)" 
-              value={newPassword} 
-              onChange={e => setNewPassword(e.target.value)} 
-              required 
-              style={inputStyle} 
-            />
-            <button type="submit" disabled={loading} style={btnPrimaryStyle}>
-              {loading ? 'Salvataggio in corso...' : 'Salva Nuova Password'}
-            </button>
-          </form>
-        </div>
-      </div>
-    )
-  }
+  return (
+    <div 
+      style={{ 
+        position: 'relative',
+        zIndex: 1,
+        '--primary-color': salonSettings.primary_color || '#2563eb',
+        '--accent-color': salonSettings.accent_color || '#D4AF37',
+        '--secondary-color': salonSettings.secondary_color || '#1E293B',
+        fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+        padding: '40px 20px', 
+        display: 'flex', 
+        flexDirection: 'column', 
+        justifyContent: 'center',
+        alignItems: 'center',
+        minHeight: '100vh',
+        backgroundColor: '#f8fafc',
+        boxSizing: 'border-box'
+      }}
+    >
+      <div style={{ width: '100%', maxWidth: '440px' }}>
+        
+        {/* Brand Header Universale Dinamico */}
+        <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+          <div style={{ fontSize: '2.5rem', marginBottom: '10px' }}>{appLogo}</div>
 
-  if (isForgotPassword) {
-    return (
-      <div className="app-container" style={{ padding: '30px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-        <div className="info-card">
-          <h2 style={{ textAlign: 'center', color: '#FFFFFF', marginTop: '10px' }}>Recupera Password</h2>
-          <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '14px', marginBottom: '15px' }}>
-            Inserisci la tua email. Ti invieremo le istruzioni per il recupero.
-          </p>
+          <h1 style={{ 
+            fontSize: '1.8rem', 
+            fontWeight: 800, 
+            margin: 0, 
+            color: 'var(--secondary-color)',
+            letterSpacing: '-0.025em',
+            lineHeight: '1.2'
+          }}>
+            {appName && appName.toLowerCase().includes('th') ? (
+              <>
+                {appName.split(/th/i)[0]}
+                <sup style={{ fontSize: '0.6em', textTransform: 'lowercase' }}>th</sup>
+                {appName.split(/th/i)[1]}
+              </>
+            ) : (
+              appName
+            )}
+          </h1>
+
+          <span style={{ 
+            display: 'block', 
+            fontSize: '0.85rem', 
+            marginTop: '6px',
+            color: '#64748b',
+            fontWeight: 600,
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase'
+          }}>
+            {salonSettings?.salon_subtitle || 'Gestione Salone'}
+          </span>
+        </div>
+
+        {/* Card Contenitore Principale */}
+        <div style={{
+          backgroundColor: '#ffffff',
+          borderRadius: '16px',
+          padding: '32px 28px',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px -2px rgba(0, 0, 0, 0.02)',
+          border: '1px solid #e2e8f0',
+          width: '100%',
+          boxSizing: 'border-box'
+        }}>
           {authError && <div style={errorBoxStyle}>{authError}</div>}
           {authSuccess && <div style={successBoxStyle}>{authSuccess}</div>}
-          
-          <form onSubmit={handleForgotPassword} style={formStyle}>
-            <input 
-              type="email" 
-              placeholder="La tua email" 
-              value={email} 
-              onChange={e => setEmail(e.target.value)} 
-              required 
-              style={inputStyle} 
-            />
-            <button type="submit" disabled={loading} style={btnPrimaryStyle}>
-              {loading ? 'Invio in corso...' : 'Invia Link di Recupero'}
-            </button>
-            <p style={linkTextStyle}>
-              Torna al <span onClick={() => { setIsForgotPassword(false); setAuthError(''); setAuthSuccess(''); }} style={linkStyle}>Login</span>
-            </p>
-          </form>
-        </div>
-      </div>
-    )
-  }
 
-  return (
-    <div className="app-container" style={{ padding: '30px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-      
-      {/* Brand Header Universale Dinamico (Senza icone fisse da barbiere) */}
-      <div style={{ textAlign: 'center', marginBottom: '25px', position: 'relative', zIndex: 1 }}>
-        
-        {/* Filigrana di sfondo */}
-        <div style={{
-          position: 'absolute',
-          top: '-35px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          fontSize: '3.6rem',
-          fontWeight: '900',
-          color: 'rgba(255, 255, 255, 0.03)',
-          whiteSpace: 'nowrap',
-          letterSpacing: '2px',
-          userSelect: 'none',
-          zIndex: -1,
-          textTransform: 'uppercase'
-        }}>
-          {appName}
-        </div>
-
-        {/* Titolo principale */}
-        <h1 className="brand-title" style={{ 
-          fontSize: '2.2rem', 
-          fontWeight: '900', 
-          margin: 0, 
-          color: '#FFFFFF',
-          textTransform: 'uppercase',
-          letterSpacing: '1px',
-          lineHeight: '1.1'
-        }}>
-          {appName && appName.toLowerCase().includes('th') ? (
-            <>
-              {appName.split(/th/i)[0]}
-              <sup style={{ fontSize: '0.6em', textTransform: 'lowercase' }}>th</sup>
-              {appName.split(/th/i)[1]}
-            </>
-          ) : (
-            appName
-          )}
-        </h1>
-
-        {/* Sottotitolo dinamico */}
-        <span className="brand-subtitle" style={{ 
-          display: 'block', 
-          fontSize: '1.2rem', 
-          marginTop: '6px',
-          color: 'var(--text-muted)',
-          fontWeight: 'normal',
-          letterSpacing: '0.5px'
-        }}>
-          {salonSettings?.salon_subtitle || 'Portale di Prenotazione'}
-        </span>
-
-      </div>
-
-      <div className="info-card" style={{ position: 'relative', zIndex: '1' }}>
-        {authError && <div style={errorBoxStyle}>{authError}</div>}
-
-        {!isRegistering ? (
-          <form onSubmit={handleLogin} style={formStyle}>
-            <input type="email" placeholder="Indirizzo Email" value={email} onChange={e => setEmail(e.target.value)} required style={inputStyle} />
-            <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={inputStyle} />
-            
-            <div style={{ textAlign: 'right', marginTop: '-5px' }}>
-              <span 
-                onClick={() => { setIsForgotPassword(true); setAuthError(''); }} 
-                style={{ ...linkStyle, fontSize: '12px', color: 'var(--text-muted)', fontWeight: 'normal' }}
-              >
-                Password dimenticata?
-              </span>
+          {isResettingPassword ? (
+            <div>
+              <h2 style={{ textAlign: 'center', color: 'var(--secondary-color)', marginTop: 0, fontSize: '1.2rem', fontWeight: 700 }}>Nuova Password</h2>
+              <p style={{ textAlign: 'center', color: '#64748b', fontSize: '13px', marginBottom: '20px' }}>
+                Inserisci la nuova password per il tuo account.
+              </p>
+              <form onSubmit={handleUpdatePassword} style={formStyle}>
+                <input 
+                  type="password" 
+                  placeholder="Nuova Password (min. 6 caratteri)" 
+                  value={newPassword} 
+                  onChange={e => setNewPassword(e.target.value)} 
+                  required 
+                  style={inputStyle} 
+                />
+                <button type="submit" disabled={loading} style={btnPrimaryStyle}>
+                  {loading ? 'Salvataggio in corso...' : 'Salva Nuova Password'}
+                </button>
+              </form>
             </div>
+          ) : isForgotPassword ? (
+            <div>
+              <h2 style={{ textAlign: 'center', color: 'var(--secondary-color)', marginTop: 0, fontSize: '1.2rem', fontWeight: 700 }}>Recupera Password</h2>
+              <p style={{ textAlign: 'center', color: '#64748b', fontSize: '13px', marginBottom: '20px' }}>
+                Inserisci la tua email per ricevere il link di recupero sicuro.
+              </p>
+              <form onSubmit={handleForgotPassword} style={formStyle}>
+                <input 
+                  type="email" 
+                  placeholder="Indirizzo Email" 
+                  value={email} 
+                  onChange={e => setEmail(e.target.value)} 
+                  required 
+                  style={inputStyle} 
+                />
+                <button type="submit" disabled={loading} style={btnPrimaryStyle}>
+                  {loading ? 'Verifica in corso...' : 'Invia Link di Recupero'}
+                </button>
+                <p style={linkTextStyle}>
+                  Torna al <span onClick={() => { setIsForgotPassword(false); setAuthError(''); setAuthSuccess(''); }} style={linkStyle}>Login</span>
+                </p>
+              </form>
+            </div>
+          ) : !isRegistering ? (
+            <form onSubmit={handleLogin} style={formStyle}>
+              <h2 style={{ textAlign: 'center', color: 'var(--secondary-color)', marginTop: 0, fontSize: '1.2rem', marginBottom: '4px', fontWeight: 700 }}>Area Riservata</h2>
+              <p style={{ textAlign: 'center', color: '#64748b', fontSize: '13px', marginBottom: '20px' }}>Accedi per gestire le tue prenotazioni</p>
 
-            <button type="submit" disabled={loading} style={btnPrimaryStyle}>
-              {loading ? 'Accesso in corso...' : 'Accedi'}
-            </button>
-            <p style={linkTextStyle}>
-              Non hai un account? <span onClick={() => { setIsRegistering(true); setAuthError(''); }} style={linkStyle}>Registrati</span>
-            </p>
-          </form>
-        ) : (
-          <form onSubmit={handleRegister} style={formStyle}>
-            <input type="text" placeholder="Nome" value={firstName} onChange={e => setFirstName(e.target.value)} required style={inputStyle} />
-            <input type="text" placeholder="Cognome" value={lastName} onChange={e => setLastName(e.target.value)} required style={inputStyle} />
-            <input type="number" placeholder="Età" value={age} onChange={e => setAge(e.target.value)} required style={inputStyle} />
-            <input type="tel" placeholder="Cellulare" value={phone} onChange={e => setPhone(e.target.value)} required style={inputStyle} />
-            <input type="email" placeholder="Indirizzo Email" value={email} onChange={e => setEmail(e.target.value)} required style={inputStyle} />
-            <input type="password" placeholder="Password (min. 6 caratteri)" value={password} onChange={e => setPassword(e.target.value)} required style={inputStyle} />
-            
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '5px 0' }}>
-              <input 
-                type="checkbox" 
-                id="privacy" 
-                checked={privacyAccepted} 
-                onChange={e => setPrivacyAccepted(e.target.checked)} 
-                style={{ cursor: 'pointer', width: '16px', height: '16px' }}
-              />
-              <label htmlFor="privacy" style={{ color: 'var(--text-muted)', fontSize: '12px', cursor: 'pointer' }}>
-                Ho letto e accetto l'
+              <input type="email" placeholder="Indirizzo Email" value={email} onChange={e => setEmail(e.target.value)} required style={inputStyle} />
+              <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={inputStyle} />
+              
+              <div style={{ textAlign: 'right', marginTop: '-2px' }}>
                 <span 
-                  onClick={(e) => {
-                    e.preventDefault()
-                    setShowPrivacyModal(true)
-                  }}
-                  style={{ color: '#FFF', textDecoration: 'underline', fontWeight: 'bold', cursor: 'pointer' }}
+                  onClick={() => { setIsForgotPassword(true); setAuthError(''); setAuthSuccess(''); }} 
+                  style={{ ...linkStyle, fontSize: '12px', color: '#64748b', fontWeight: 600 }}
                 >
-                  Informativa sulla Privacy
+                  Password dimenticata?
                 </span>
-              </label>
-            </div>
+              </div>
 
-            <button type="submit" disabled={loading} style={btnPrimaryStyle}>
-              {loading ? 'Registrazione...' : 'Crea Account'}
-            </button>
-            <p style={linkTextStyle}>
-              Hai già un account? <span onClick={() => { setIsRegistering(false); setAuthError(''); }} style={linkStyle}>Accedi</span>
-            </p>
-          </form>
-        )}
+              <button type="submit" disabled={loading} style={btnPrimaryStyle}>
+                {loading ? 'Accesso in corso...' : 'Accedi'}
+              </button>
+              <p style={linkTextStyle}>
+                Non hai un account? <span onClick={() => { setIsRegistering(true); setAuthError(''); setAuthSuccess(''); }} style={linkStyle}>Registrati ora</span>
+              </p>
+            </form>
+          ) : (
+            <form onSubmit={handleRegister} style={formStyle}>
+              <h2 style={{ textAlign: 'center', color: 'var(--secondary-color)', marginTop: 0, fontSize: '1.2rem', marginBottom: '4px', fontWeight: 700 }}>Crea Account</h2>
+              <p style={{ textAlign: 'center', color: '#64748b', fontSize: '13px', marginBottom: '20px' }}>Inserisci i tuoi dati per registrarti</p>
+
+              <input type="text" placeholder="Nome" value={firstName} onChange={e => setFirstName(e.target.value)} required style={inputStyle} />
+              <input type="text" placeholder="Cognome" value={lastName} onChange={e => setLastName(e.target.value)} required style={inputStyle} />
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <input type="number" placeholder="Età" value={age} onChange={e => setAge(e.target.value)} required style={{ ...inputStyle, flex: 1 }} />
+                <input type="tel" placeholder="Cellulare" value={phone} onChange={e => setPhone(e.target.value)} required style={{ ...inputStyle, flex: 2 }} />
+              </div>
+              <input type="email" placeholder="Indirizzo Email" value={email} onChange={e => setEmail(e.target.value)} required style={inputStyle} />
+              <input type="password" placeholder="Password (min. 6 caratteri)" value={password} onChange={e => setPassword(e.target.value)} required style={inputStyle} />
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '10px 0' }}>
+                <input 
+                  type="checkbox" 
+                  id="privacy" 
+                  checked={privacyAccepted} 
+                  onChange={e => setPrivacyAccepted(e.target.checked)} 
+                  style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: 'var(--primary-color)' }}
+                />
+                <label htmlFor="privacy" style={{ color: '#475569', fontSize: '12px', cursor: 'pointer' }}>
+                  Accetto l'
+                  <span 
+                    onClick={(e) => {
+                      e.preventDefault()
+                      setShowPrivacyModal(true)
+                    }}
+                    style={{ color: 'var(--secondary-color)', textDecoration: 'underline', fontWeight: 700, cursor: 'pointer', marginLeft: '3px' }}
+                  >
+                    Informativa sulla Privacy
+                  </span>
+                </label>
+              </div>
+
+              <button type="submit" disabled={loading} style={btnPrimaryStyle}>
+                {loading ? 'Registrazione in corso...' : 'Crea Account'}
+              </button>
+              <p style={linkTextStyle}>
+                Hai già un account? <span onClick={() => { setIsRegistering(false); setAuthError(''); setAuthSuccess(''); }} style={linkStyle}>Accedi</span>
+              </p>
+            </form>
+          )}
+        </div>
       </div>
 
       {/* MODALE INFORMATIVA PRIVACY */}
@@ -342,7 +384,8 @@ export function Auth({
           left: 0,
           right: 0,
           bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.85)',
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          backdropFilter: 'blur(4px)',
           zIndex: 1000,
           display: 'flex',
           justifyContent: 'center',
@@ -350,37 +393,40 @@ export function Auth({
           padding: '20px'
         }}>
           <div style={{
-            backgroundColor: '#1c1c1e',
-            border: '1px solid var(--border-color)',
-            borderRadius: '12px',
-            padding: '20px',
-            maxWidth: '500px',
+            backgroundColor: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '16px',
+            padding: '28px',
+            maxWidth: '480px',
             maxHeight: '80vh',
             overflowY: 'auto',
-            color: '#FFF'
+            color: '#1e293b',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)'
           }}>
-            <h3 style={{ color: 'var(--barber-red)', marginTop: 0 }}>Informativa sulla Privacy</h3>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+            <h3 style={{ color: 'var(--primary-color)', marginTop: 0, fontSize: '1.15rem', fontWeight: 700 }}>Informativa sulla Privacy</h3>
+            <p style={{ fontSize: '13px', color: '#475569', lineHeight: '1.6' }}>
               Ai sensi del Regolamento UE 2016/679 (GDPR), i dati raccolti (Nome, Cognome, Età, Telefono, Email) sono trattati esclusivamente per la gestione delle prenotazioni e dell'account utente presso <strong>{appName}</strong>.
             </p>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+            <p style={{ fontSize: '13px', color: '#475569', lineHeight: '1.6' }}>
               I dati sono protetti e non ceduti a terzi. Puoi richiederne la cancellazione in qualsiasi momento direttamente dall'applicazione.
             </p>
             <button 
               onClick={() => setShowPrivacyModal(false)}
               style={{
                 width: '100%',
-                padding: '10px',
-                borderRadius: '6px',
+                padding: '12px',
+                borderRadius: '8px',
                 border: 'none',
-                backgroundColor: 'var(--barber-red)',
+                backgroundColor: 'var(--primary-color)',
                 color: '#FFF',
-                fontWeight: 'bold',
+                fontWeight: 600,
                 cursor: 'pointer',
-                marginTop: '15px'
+                marginTop: '16px',
+                fontSize: '0.9rem',
+                boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)'
               }}
             >
-              Chiudi
+              Ho capito
             </button>
           </div>
         </div>
@@ -394,51 +440,54 @@ const formStyle = { display: 'flex', flexDirection: 'column', gap: '14px' }
 
 const inputStyle = { 
   width: '100%', 
-  padding: '12px 14px', 
-  borderRadius: '6px', 
-  border: '1px solid var(--border-color)', 
-  backgroundColor: 'rgba(15, 15, 15, 0.8)', 
-  color: '#FFF', 
+  padding: '11px 14px', 
+  borderRadius: '8px', 
+  border: '1px solid #cbd5e1', 
+  backgroundColor: '#f8fafc', 
+  color: '#1e293b', 
   boxSizing: 'border-box',
   outline: 'none',
-  fontSize: '14px'
+  fontSize: '14px',
+  transition: 'border-color 0.2s'
 }
 
 const btnPrimaryStyle = { 
   width: '100%', 
-  padding: '13px', 
-  borderRadius: '6px', 
+  padding: '12px', 
+  borderRadius: '8px', 
   border: 'none', 
-  backgroundColor: 'var(--barber-red)', 
+  backgroundColor: 'var(--primary-color)', 
   color: '#FFF', 
-  fontWeight: 'bold', 
-  fontSize: '0.95rem',
-  letterSpacing: '0.5px',
+  fontWeight: 600, 
+  fontSize: '0.9rem',
   cursor: 'pointer',
-  marginTop: '5px',
-  boxShadow: '0 4px 12px rgba(211, 47, 47, 0.3)'
+  marginTop: '4px',
+  boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)',
+  transition: 'background 0.2s'
 }
 
 const errorBoxStyle = { 
-  background: 'rgba(211, 47, 47, 0.2)', 
-  border: '1px solid var(--barber-red)',
-  color: '#FFF', 
-  padding: '10px 14px', 
-  borderRadius: '6px', 
-  marginBottom: '15px',
-  fontSize: '13px'
+  background: '#fee2e2', 
+  border: '1px solid #fca5a5',
+  color: '#b91c1c', 
+  padding: '12px 14px', 
+  borderRadius: '8px', 
+  marginBottom: '18px',
+  fontSize: '13px',
+  fontWeight: 500
 }
 
 const successBoxStyle = { 
-  background: 'rgba(46, 125, 50, 0.2)', 
-  border: '1px solid #2e7d32',
-  color: '#81c784', 
-  padding: '10px 14px', 
-  borderRadius: '6px', 
-  marginBottom: '15px',
+  background: '#dcfce7', 
+  border: '1px solid #86efac',
+  color: '#166534', 
+  padding: '12px 14px', 
+  borderRadius: '8px', 
+  marginBottom: '18px',
   fontSize: '13px',
-  textAlign: 'center'
+  textAlign: 'center',
+  fontWeight: 500
 }
 
-const linkTextStyle = { textAlign: 'center', color: 'var(--text-muted)', fontSize: '14px',marginTop: '10px' }
-const linkStyle = { color: '#FFFFFF', cursor: 'pointer', textDecoration: 'underline', fontWeight: 'bold' }
+const linkTextStyle = { textAlign: 'center', color: '#64748b', fontSize: '13px', marginTop: '14px', marginBottom: 0 }
+const linkStyle = { color: 'var(--secondary-color)', cursor: 'pointer', textDecoration: 'underline', fontWeight: 700 }
