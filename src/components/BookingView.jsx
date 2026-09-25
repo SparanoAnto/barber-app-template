@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
 
 const DEFAULT_HOLIDAYS = [
@@ -6,7 +6,7 @@ const DEFAULT_HOLIDAYS = [
 ]
 
 const getCategoryIcon = (categoryName) => {
-  const name = categoryName.toLowerCase()
+  const name = (categoryName || '').toLowerCase()
   if (name.includes('capelli') || name.includes('taglio')) return '✂️'
   if (name.includes('barba')) return '🧔'
   if (name.includes('prodotto') || name.includes('rivendita')) return '🛍️'
@@ -16,7 +16,7 @@ const getCategoryIcon = (categoryName) => {
 }
 
 export function BookingView({ 
-  services, 
+  services = [], 
   onServicesChange, 
   userId, 
   isAdmin, 
@@ -56,18 +56,61 @@ export function BookingView({
   const [dateError, setDateError] = useState('')
   const [holidayNotice, setHolidayNotice] = useState('')
 
+  const todayString = useMemo(() => new Date().toLocaleDateString('sv-SE'), [])
+
   // Ricerca mirata di TUTTI i servizi di tipo Extra Time presenti nel database
-  const extraServicesList = services.filter(s => {
-    const name = s.name ? s.name.toLowerCase() : ''
-    const category = s.category ? s.category.toLowerCase() : ''
-    return name.includes('extra time') || name.includes('tempo extra') || category.includes('extra time') || category.includes('durata extra')
-  })
+  const extraServicesList = useMemo(() => {
+    return services.filter(s => {
+      const name = s.name ? s.name.toLowerCase() : ''
+      const category = s.category ? s.category.toLowerCase() : ''
+      return name.includes('extra time') || name.includes('tempo extra') || category.includes('extra time') || category.includes('durata extra')
+    })
+  }, [services])
 
-  // Per compatibilità se serve un riferimento singolo principale (es. il primo trovato o con durata maggiore)
   const configuredExtraService = extraServicesList.length > 0 ? extraServicesList[0] : null
-  const extraServiceDuration = configuredExtraService ? configuredExtraService.duration_minutes : 0
 
-  const todayString = new Date().toLocaleDateString('sv-SE')
+  const fetchShopClosures = useCallback(async () => {
+    const { data } = await supabase.from('shop_closures').select('*')
+    if (data) setShopClosures(data)
+  }, [])
+
+  const fetchBarberExceptions = useCallback(async () => {
+    const { data } = await supabase.from('barber_exceptions').select('*')
+    if (data) setBarberExceptions(data)
+  }, [])
+
+  const fetchActiveBarbers = useCallback(async () => {
+    setLoadingBarbers(true)
+    const { data, error } = await supabase
+      .from('barbers')
+      .select('*')
+      .eq('is_active', true)
+      .order('name', { ascending: true })
+
+    if (data && !error) {
+      setActiveBarbers(data)
+      setSelectedBarber(prev => {
+        if (prev && !data.some(b => b.id === prev.id)) return null
+        return prev
+      })
+    }
+    setLoadingBarbers(false)
+  }, [])
+
+  const fetchBarberWorkingDays = useCallback(async () => {
+    const { data } = await supabase.from('barber_working_days').select('*')
+    if (data) setBarberWorkingDays(data)
+  }, [])
+
+  const fetchOfflineClients = useCallback(async () => {
+    const { data } = await supabase.from('offline_clients').select('*').order('full_name', { ascending: true })
+    if (data) setOfflineClients(data)
+  }, [])
+
+  const fetchAppUsers = useCallback(async () => {
+    const { data } = await supabase.from('profiles').select('id, full_name, email').order('full_name', { ascending: true })
+    if (data) setAppUsers(data)
+  }, [])
 
   useEffect(() => {
     fetchShopClosures()
@@ -94,100 +137,63 @@ export function BookingView({
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [isAdmin])
+  }, [isAdmin, fetchShopClosures, fetchBarberExceptions, fetchActiveBarbers, fetchBarberWorkingDays, fetchOfflineClients, fetchAppUsers, onServicesChange])
 
   useEffect(() => {
     if (preselectedClient && isAdmin) {
-      if (preselectedClient.type === 'app') {
-        setSelectedClientType('app')
-        setSelectedClientId(preselectedClient.id)
-      } else if (preselectedClient.type === 'offline') {
-        setSelectedClientType('offline')
+      if (preselectedClient.type === 'app' || preselectedClient.type === 'offline') {
+        setSelectedClientType(preselectedClient.type)
         setSelectedClientId(preselectedClient.id)
       }
     }
   }, [preselectedClient, isAdmin])
 
-  async function fetchShopClosures() {
-    const { data } = await supabase.from('shop_closures').select('*')
-    if (data) setShopClosures(data)
-  }
-
-  async function fetchBarberExceptions() {
-    const { data } = await supabase.from('barber_exceptions').select('*')
-    if (data) setBarberExceptions(data)
-  }
-
-  async function fetchActiveBarbers() {
-    setLoadingBarbers(true)
-    const { data, error } = await supabase
-      .from('barbers')
-      .select('*')
-      .eq('is_active', true)
-      .order('name', { ascending: true })
-
-    if (data && !error) {
-      setActiveBarbers(data)
-      setSelectedBarber(prev => {
-        if (prev && !data.some(b => b.id === prev.id)) return null
-        return prev
-      })
-    }
-    setLoadingBarbers(false)
-  }
-
-  async function fetchBarberWorkingDays() {
-    const { data } = await supabase.from('barber_working_days').select('*')
-    if (data) setBarberWorkingDays(data)
-  }
-
-  async function fetchOfflineClients() {
-    const { data } = await supabase.from('offline_clients').select('*').order('full_name', { ascending: true })
-    if (data) setOfflineClients(data)
-  }
-
-  async function fetchAppUsers() {
-    const { data } = await supabase.from('profiles').select('id, full_name, email').order('full_name', { ascending: true })
-    if (data) setAppUsers(data)
-  }
-
-  const isShopClosedPeriod = (dateStr) => {
+  const isShopClosedPeriod = useCallback((dateStr) => {
     if (!dateStr) return false
     return shopClosures.some(closure => dateStr >= closure.start_date && dateStr <= closure.end_date)
-  }
+  }, [shopClosures])
 
-  const generateTimeSlots = () => {
-    let targetOpening = openingTime
-    let targetClosing = closingTime
+  const isClosedDay = useCallback((dateStr) => {
+    if (!dateStr) return false
+    const day = new Date(dateStr + 'T00:00:00').getDay()
+    return closedDays.includes(day)
+  }, [closedDays])
 
-    if (selectedDate && selectedBarber) {
-      const dayOfWeek = new Date(selectedDate + 'T00:00:00').getDay()
-      const wd = barberWorkingDays.find(w => w.barber_id === selectedBarber.id && w.day_of_week === dayOfWeek)
-      if (wd) {
-        if (wd.start_time) targetOpening = wd.start_time.slice(0, 5)
-        if (wd.end_time) targetClosing = wd.end_time.slice(0, 5)
-      }
+  const isHolidayDate = useCallback((dateStr) => {
+    if (!dateStr) return false
+    return holidays.includes(dateStr.slice(5))
+  }, [holidays])
+
+  const handleDateChange = useCallback((dateVal) => {
+    setDateError('')
+    setHolidayNotice('')
+    setSelectedTime('')
+    setSelectedBarber(null)
+
+    if (!dateVal) {
+      setSelectedDate('')
+      return
     }
 
-    const slots = []
-    const [startH, startM] = targetOpening.split(':').map(Number)
-    const [endH, endM] = targetClosing.split(':').map(Number)
-
-    let current = new Date()
-    current.setHours(startH, startM, 0, 0)
-    const end = new Date()
-    end.setHours(endH, endM, 0, 0)
-
-    while (current < end) {
-      const hours = String(current.getHours()).padStart(2, '0')
-      const minutes = String(current.getMinutes()).padStart(2, '0')
-      slots.push(`${hours}:${minutes}`)
-      current.setMinutes(current.getMinutes() + slotIntervalMinutes)
+    if (isClosedDay(dateVal)) {
+      setDateError('⚠️ Il salone è chiuso nel giorno selezionato (giorno di chiusura settimanale).')
+      setSelectedDate('')
+      return
     }
-    return slots
-  }
 
-  const allTimeSlots = generateTimeSlots()
+    if (isShopClosedPeriod(dateVal)) {
+      const closureInfo = shopClosures.find(c => dateVal >= c.start_date && dateVal <= c.end_date)
+      setDateError(`🏖️ Il salone è chiuso per "${closureInfo?.reason || 'Ferie Collettive'}" in questa data.`)
+      setSelectedDate('')
+      return
+    }
+
+    setSelectedDate(dateVal)
+
+    if (isHolidayDate(dateVal)) {
+      setHolidayNotice('🎉 Giorno Festivo: Gli orari del salone potrebbero subire variazioni o aperture straordinarie.')
+    }
+  }, [isClosedDay, isShopClosedPeriod, isHolidayDate, shopClosures])
 
   useEffect(() => {
     if (editingAppointment) {
@@ -261,7 +267,7 @@ export function BookingView({
       setDateError('')
       setHolidayNotice('')
     }
-  }, [editingAppointment, services, activeBarbers])
+  }, [editingAppointment, services, activeBarbers, extraServicesList, userId, preselectedClient, handleDateChange])
 
   const toggleService = (service) => {
     const exists = selectedServices.find(s => s.id === service.id)
@@ -282,59 +288,63 @@ export function BookingView({
     }))
   }
 
-  const baseServicesDuration = selectedServices.reduce((acc, s) => acc + s.duration_minutes, 0)
+  const baseServicesDuration = useMemo(() => {
+    return selectedServices.reduce((acc, s) => acc + (s.duration_minutes || 0), 0)
+  }, [selectedServices])
+
   const totalDuration = baseServicesDuration + (isAdmin ? Number(adminExtraMinutes) : 0)
   
-  const totalPrice = selectedServices.reduce((acc, s) => {
-    const priceToUse = (s.duration_minutes === 0 && customServicePrices[s.id] !== undefined && customServicePrices[s.id] !== '')
-      ? parseFloat(customServicePrices[s.id])
-      : parseFloat(s.price)
-    return acc + (isNaN(priceToUse) ? 0 : priceToUse)
-  }, 0) + (isAdmin && adminExtraMinutes > 0 ? (extraServicesList.find(es => es.duration_minutes === Number(adminExtraMinutes))?.price || 0) : 0)
+  const totalPrice = useMemo(() => {
+    const servicesTotal = selectedServices.reduce((acc, s) => {
+      const priceToUse = (s.duration_minutes === 0 && customServicePrices[s.id] !== undefined && customServicePrices[s.id] !== '')
+        ? parseFloat(customServicePrices[s.id])
+        : parseFloat(s.price)
+      return acc + (isNaN(priceToUse) ? 0 : priceToUse)
+    }, 0)
 
-  const isClosedDay = (dateStr) => {
-    if (!dateStr) return false
-    const day = new Date(dateStr + 'T00:00:00').getDay()
-    return closedDays.includes(day)
-  }
-
-  const isHolidayDate = (dateStr) => {
-    if (!dateStr) return false
-    return holidays.includes(dateStr.slice(5))
-  }
-
-  const handleDateChange = (dateVal) => {
-    setDateError('')
-    setHolidayNotice('')
-    setSelectedTime('')
-    setSelectedBarber(null)
-
-    if (!dateVal) {
-      setSelectedDate('')
-      return
+    let extraPrice = 0
+    if (isAdmin && adminExtraMinutes > 0) {
+      const matchedExtra = extraServicesList.find(es => es.duration_minutes === Number(adminExtraMinutes)) || configuredExtraService
+      extraPrice = matchedExtra ? parseFloat(matchedExtra.price || 0) : 0
     }
 
-    if (isClosedDay(dateVal)) {
-      setDateError('⚠️ Il salone è chiuso nel giorno selezionato (giorno di chiusura settimanale).')
-      setSelectedDate('')
-      return
+    return servicesTotal + extraPrice
+  }, [selectedServices, customServicePrices, isAdmin, adminExtraMinutes, extraServicesList, configuredExtraService])
+
+  const generateTimeSlots = useCallback(() => {
+    let targetOpening = openingTime
+    let targetClosing = closingTime
+
+    if (selectedDate && selectedBarber) {
+      const dayOfWeek = new Date(selectedDate + 'T00:00:00').getDay()
+      const wd = barberWorkingDays.find(w => w.barber_id === selectedBarber.id && w.day_of_week === dayOfWeek)
+      if (wd) {
+        if (wd.start_time) targetOpening = wd.start_time.slice(0, 5)
+        if (wd.end_time) targetClosing = wd.end_time.slice(0, 5)
+      }
     }
 
-    if (isShopClosedPeriod(dateVal)) {
-      const closureInfo = shopClosures.find(c => dateVal >= c.start_date && dateVal <= c.end_date)
-      setDateError(`🏖️ Il salone è chiuso per "${closureInfo?.reason || 'Ferie Collettive'}" in questa data.`)
-      setSelectedDate('')
-      return
+    const slots = []
+    const [startH, startM] = targetOpening.split(':').map(Number)
+    const [endH, endM] = targetClosing.split(':').map(Number)
+
+    let current = new Date()
+    current.setHours(startH, startM, 0, 0)
+    const end = new Date()
+    end.setHours(endH, endM, 0, 0)
+
+    while (current < end) {
+      const hours = String(current.getHours()).padStart(2, '0')
+      const minutes = String(current.getMinutes()).padStart(2, '0')
+      slots.push(`${hours}:${minutes}`)
+      current.setMinutes(current.getMinutes() + slotIntervalMinutes)
     }
+    return slots
+  }, [selectedDate, selectedBarber, openingTime, closingTime, barberWorkingDays, slotIntervalMinutes])
 
-    setSelectedDate(dateVal)
+  const allTimeSlots = useMemo(() => generateTimeSlots(), [generateTimeSlots])
 
-    if (isHolidayDate(dateVal)) {
-      setHolidayNotice('🎉 Giorno Festivo: Gli orari del salone potrebbero subire variazioni o aperture straordinarie.')
-    }
-  }
-
-  const getAvailableBarbersForDate = (dateStr) => {
+  const getAvailableBarbersForDate = useCallback((dateStr) => {
     if (!dateStr) return activeBarbers
     const dayOfWeek = new Date(dateStr + 'T00:00:00').getDay()
 
@@ -347,36 +357,36 @@ export function BookingView({
       }
       return true
     })
-  }
+  }, [activeBarbers, barberWorkingDays])
 
   useEffect(() => {
-    if (selectedDate && selectedBarber) {
-      fetchExistingAppointments()
-    } else {
-      setExistingAppointments([])
+    const fetchExistingAppointments = async () => {
+      if (!selectedDate || !selectedBarber) {
+        setExistingAppointments([])
+        return
+      }
+      setLoadingSlots(true)
+
+      let query = supabase
+        .from('appointments')
+        .select('id, appointment_date, start_time, end_time')
+        .eq('barber_id', selectedBarber.id)
+        .eq('appointment_date', selectedDate)
+        .neq('status', 'cancelled')
+
+      if (editingAppointment?.id) {
+        query = query.neq('id', editingAppointment.id)
+      }
+
+      const { data } = await query
+      setExistingAppointments(data || [])
+      setLoadingSlots(false)
     }
+
+    fetchExistingAppointments()
   }, [selectedDate, selectedBarber, editingAppointment])
 
-  async function fetchExistingAppointments() {
-    setLoadingSlots(true)
-
-    let query = supabase
-      .from('appointments')
-      .select('id, appointment_date, start_time, end_time')
-      .eq('barber_id', selectedBarber.id)
-      .eq('appointment_date', selectedDate)
-      .neq('status', 'cancelled')
-
-    if (editingAppointment?.id) {
-      query = query.neq('id', editingAppointment.id)
-    }
-
-    const { data } = await query
-    setExistingAppointments(data || [])
-    setLoadingSlots(false)
-  }
-
-  const isBarberAvailableAtSlot = (slot) => {
+  const isBarberAvailableAtSlot = useCallback((slot) => {
     if (!selectedBarber || !selectedDate) return true
     const exception = barberExceptions.find(exc => exc.barber_id === selectedBarber.id && exc.date === selectedDate)
     if (!exception) return true
@@ -391,9 +401,9 @@ export function BookingView({
 
     if (proposedStart < excEnd && proposedEnd > excStart) return false 
     return true
-  }
+  }, [selectedBarber, selectedDate, barberExceptions, totalDuration, slotIntervalMinutes])
 
-  const isSlotAvailable = (slot) => {
+  const isSlotAvailable = useCallback((slot) => {
     if (!selectedDate) return false
     const now = new Date()
     const proposedStart = new Date(`${selectedDate}T${slot}:00`)
@@ -430,7 +440,7 @@ export function BookingView({
       }
     }
     return true
-  }
+  }, [selectedDate, todayString, isBarberAvailableAtSlot, totalDuration, slotIntervalMinutes, closingTime, selectedBarber, barberWorkingDays, existingAppointments])
 
   async function handleConfirmBooking() {
     if (!selectedDate || !selectedBarber || !selectedTime || selectedServices.length === 0) {
