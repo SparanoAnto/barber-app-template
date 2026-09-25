@@ -652,7 +652,11 @@ export function BookingView({
         const filteredServices = services.filter(s => {
           const isExtraCategory = s.category && s.category.toLowerCase().includes('extra')
           const isExtraName = s.name && s.name.toLowerCase().includes('extra')
-          return s.is_bookable && !isExtraCategory && !isExtraName;
+          
+          // Se non è admin e il servizio è di tipo extra, nascondilo
+          if (!isAdmin && (isExtraCategory || isExtraName)) return false
+
+          return s.is_bookable;
         });
         
         filteredServices.sort((a, b) => a.name.localeCompare(b.name));
