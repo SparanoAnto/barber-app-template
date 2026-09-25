@@ -56,11 +56,12 @@ export function BookingView({
   const [dateError, setDateError] = useState('')
   const [holidayNotice, setHolidayNotice] = useState('')
 
-  // Ricerca di un servizio extra configurato nel database
-  const configuredExtraService = services.find(s => 
-    (s.category && (s.category.toLowerCase().includes('extra') || s.category.toLowerCase().includes('durata'))) || 
-    (s.name && (s.name.toLowerCase().includes('extra') || s.name.toLowerCase().includes('extra time')))
-  )
+  // Ricerca sicura e universale del servizio extra (cerca corrispondenze blindate per evitare falsi positivi)
+  const configuredExtraService = services.find(s => {
+    const name = s.name ? s.name.toLowerCase() : ''
+    const category = s.category ? s.category.toLowerCase() : ''
+    return name === 'extra time' || name === 'tempo extra' || category === 'extra time' || category === 'durata extra'
+  })
   const extraServiceDuration = configuredExtraService ? configuredExtraService.duration_minutes : 0
 
   const todayString = new Date().toLocaleDateString('sv-SE')
@@ -189,8 +190,8 @@ export function BookingView({
     if (editingAppointment) {
       const currentServiceIds = editingAppointment.appointment_services?.map(as => as.service_id || as.services?.id) || []
       
-      const normalServices = services.filter(s => currentServiceIds.includes(s.id) && !s.name.toLowerCase().includes('extra time') && !s.name.toLowerCase().includes('extra'))
-      const extraServiceFound = services.find(s => currentServiceIds.includes(s.id) && (s.name.toLowerCase().includes('extra time') || s.name.toLowerCase().includes('extra')))
+      const normalServices = services.filter(s => currentServiceIds.includes(s.id) && s !== configuredExtraService)
+      const extraServiceFound = services.find(s => currentServiceIds.includes(s.id) && s === configuredExtraService)
 
       setSelectedServices(normalServices)
 
@@ -647,11 +648,8 @@ export function BookingView({
 
       {(() => {
         const filteredServices = services.filter(s => {
-          const isExtraCategory = s.category && s.category.toLowerCase().includes('extra')
-          const isExtraName = s.name && s.name.toLowerCase().includes('extra')
-          
-          if (!isAdmin && (isExtraCategory || isExtraName)) return false
-
+          // Nascondi il servizio extra dalla lista principale dei servizi selezionabili dall'utente/admin
+          if (configuredExtraService && s.id === configuredExtraService.id) return false
           return s.is_bookable;
         });
         
