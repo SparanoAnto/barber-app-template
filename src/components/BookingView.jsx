@@ -56,11 +56,12 @@ export function BookingView({
   const [dateError, setDateError] = useState('')
   const [holidayNotice, setHolidayNotice] = useState('')
 
+  // Ricerca di un servizio extra configurato nel database
   const configuredExtraService = services.find(s => 
-    (s.category && s.category.toLowerCase().includes('extra')) || 
-    (s.name && s.name.toLowerCase().includes('extra'))
+    (s.category && (s.category.toLowerCase().includes('extra') || s.category.toLowerCase().includes('durata'))) || 
+    (s.name && (s.name.toLowerCase().includes('extra') || s.name.toLowerCase().includes('extra time')))
   )
-  const extraServiceDuration = configuredExtraService ? configuredExtraService.duration_minutes : 30
+  const extraServiceDuration = configuredExtraService ? configuredExtraService.duration_minutes : 0
 
   const todayString = new Date().toLocaleDateString('sv-SE')
 
@@ -446,13 +447,9 @@ export function BookingView({
     try {
       let servicesToSave = [...selectedServices]
 
-      if (isAdmin && adminExtraMinutes > 0) {
-        let extraService = configuredExtraService
-        if (!extraService) {
-          extraService = services.find(s => s.name.toLowerCase().includes('extra'))
-        }
-        if (extraService && !servicesToSave.some(s => s.id === extraService.id)) {
-          servicesToSave.push(extraService)
+      if (isAdmin && adminExtraMinutes > 0 && configuredExtraService) {
+        if (!servicesToSave.some(s => s.id === configuredExtraService.id)) {
+          servicesToSave.push(configuredExtraService)
         }
       }
 
@@ -653,7 +650,6 @@ export function BookingView({
           const isExtraCategory = s.category && s.category.toLowerCase().includes('extra')
           const isExtraName = s.name && s.name.toLowerCase().includes('extra')
           
-          // Se non è admin e il servizio è di tipo extra, nascondilo
           if (!isAdmin && (isExtraCategory || isExtraName)) return false
 
           return s.is_bookable;
@@ -736,16 +732,17 @@ export function BookingView({
 
       {selectedServices.length > 0 && (
         <>
-          {isAdmin && (
+          {/* Mostra il selettore extra SOLO SE l'amministratore ha censito un servizio extra nel database */}
+          {isAdmin && configuredExtraService && (
             <div style={{ padding: '16px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '12px', marginBottom: '24px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
                   <strong style={{ color: 'var(--primary-color)', fontSize: '0.9rem', display: 'block', marginBottom: '2px' }}>⏱️ Regolazione Durata Extra (Admin)</strong>
-                  <span style={{ fontSize: '12px', color: '#64748b' }}>Aggiunge minuti extra alla prestazione.</span>
+                  <span style={{ fontSize: '12px', color: '#64748b' }}>Aggiunge minuti extra ({configuredExtraService.name}) alla prestazione.</span>
                 </div>
                 <select value={adminExtraMinutes} onChange={(e) => setAdminExtraMinutes(Number(e.target.value))} style={{ ...inputStyle, width: '180px', padding: '10px 12px', backgroundColor: '#fff', color: '#1e293b', fontWeight: 700 }}>
                   <option value={0}>Nessun extra (+0 min)</option>
-                  <option value={extraServiceDuration}>+{extraServiceDuration} min (Tot: {baseServicesDuration + extraServiceDuration}m)</option>
+                  <option value={configuredExtraService.duration_minutes}>+{configuredExtraService.duration_minutes} min (Tot: {baseServicesDuration + configuredExtraService.duration_minutes}m)</option>
                 </select>
               </div>
             </div>
