@@ -56,12 +56,15 @@ export function BookingView({
   const [dateError, setDateError] = useState('')
   const [holidayNotice, setHolidayNotice] = useState('')
 
-  // Ricerca sicura e universale del servizio extra (cerca corrispondenze blindate per evitare falsi positivi)
-  const configuredExtraService = services.find(s => {
+  // Ricerca mirata di TUTTI i servizi di tipo Extra Time presenti nel database
+  const extraServicesList = services.filter(s => {
     const name = s.name ? s.name.toLowerCase() : ''
     const category = s.category ? s.category.toLowerCase() : ''
-    return name === 'extra time' || name === 'tempo extra' || category === 'extra time' || category === 'durata extra'
+    return name.includes('extra time') || name.includes('tempo extra') || category.includes('extra time') || category.includes('durata extra')
   })
+
+  // Per compatibilità se serve un riferimento singolo principale (es. il primo trovato o con durata maggiore)
+  const configuredExtraService = extraServicesList.length > 0 ? extraServicesList[0] : null
   const extraServiceDuration = configuredExtraService ? configuredExtraService.duration_minutes : 0
 
   const todayString = new Date().toLocaleDateString('sv-SE')
@@ -190,13 +193,13 @@ export function BookingView({
     if (editingAppointment) {
       const currentServiceIds = editingAppointment.appointment_services?.map(as => as.service_id || as.services?.id) || []
       
-      const normalServices = services.filter(s => currentServiceIds.includes(s.id) && s !== configuredExtraService)
-      const extraServiceFound = services.find(s => currentServiceIds.includes(s.id) && s === configuredExtraService)
+      const normalServices = services.filter(s => currentServiceIds.includes(s.id) && !extraServicesList.some(es => es.id === s.id))
+      const matchedExtraServiceFound = services.find(s => currentServiceIds.includes(s.id) && extraServicesList.some(es => es.id === s.id))
 
       setSelectedServices(normalServices)
 
-      if (extraServiceFound) {
-        setAdminExtraMinutes(extraServiceFound.duration_minutes || extraServiceDuration)
+      if (matchedExtraServiceFound) {
+        setAdminExtraMinutes(matchedExtraServiceFound.duration_minutes || 0)
       } else if (editingAppointment.start_time && editingAppointment.end_time) {
         const [sH, sM] = editingAppointment.start_time.split(':').map(Number)
         const [eH, eM] = editingAppointment.end_time.split(':').map(Number)
@@ -287,7 +290,7 @@ export function BookingView({
       ? parseFloat(customServicePrices[s.id])
       : parseFloat(s.price)
     return acc + (isNaN(priceToUse) ? 0 : priceToUse)
-  }, 0)
+  }, 0) + (isAdmin && adminExtraMinutes > 0 ? (extraServicesList.find(es => es.duration_minutes === Number(adminExtraMinutes))?.price || 0) : 0)
 
   const isClosedDay = (dateStr) => {
     if (!dateStr) return false
@@ -448,9 +451,10 @@ export function BookingView({
     try {
       let servicesToSave = [...selectedServices]
 
-      if (isAdmin && adminExtraMinutes > 0 && configuredExtraService) {
-        if (!servicesToSave.some(s => s.id === configuredExtraService.id)) {
-          servicesToSave.push(configuredExtraService)
+      if (isAdmin && adminExtraMinutes > 0) {
+        const matchingExtraService = extraServicesList.find(es => es.duration_minutes === Number(adminExtraMinutes)) || configuredExtraService
+        if (matchingExtraService && !servicesToSave.some(s => s.id === matchingExtraService.id)) {
+          servicesToSave.push(matchingExtraService)
         }
       }
 
@@ -648,7 +652,7 @@ export function BookingView({
 
       {(() => {
         const filteredServices = services.filter(s => {
-          if (configuredExtraService && s.id === configuredExtraService.id) return false
+          if (extraServicesList.some(es => es.id === s.id)) return false
           return s.is_bookable;
         });
         
@@ -729,16 +733,20 @@ export function BookingView({
 
       {selectedServices.length > 0 && (
         <>
-          {isAdmin && configuredExtraService && (
+          {isAdmin && extraServicesList.length > 0 && (
             <div style={{ padding: '16px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '12px', marginBottom: '24px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
                   <strong style={{ color: 'var(--primary-color)', fontSize: '0.9rem', display: 'block', marginBottom: '2px' }}>⏱️ Regolazione Durata Extra (Admin)</strong>
-                  <span style={{ fontSize: '12px', color: '#64748b' }}>Aggiunge minuti extra ({configuredExtraService.name}) alla prestazione.</span>
+                  <span style={{ fontSize: '12px', color: '#64748b' }}>Aggiunge minuti e costo basati sui servizi di extra time configurati.</span>
                 </div>
-                <select value={adminExtraMinutes} onChange={(e) => setAdminExtraMinutes(Number(e.target.value))} style={{ ...inputStyle, width: '180px', padding: '10px 12px', backgroundColor: '#fff', color: '#1e293b', fontWeight: 700 }}>
+                <select value={adminExtraMinutes} onChange={(e) => setAdminExtraMinutes(Number(e.target.value))} style={{ ...inputStyle, width: '220px', padding: '10px 12px', backgroundColor: '#fff', color: '#1e293b', fontWeight: 700 }}>
                   <option value={0}>Nessun extra (+0 min)</option>
-                  <option value={configuredExtraService.duration_minutes}>+{configuredExtraService.duration_minutes} min (Tot: {baseServicesDuration + configuredExtraService.duration_minutes}m)</option>
+                  {extraServicesList.map(es => (
+                    <option key={es.id} value={es.duration_minutes}>
+                      {es.name} (+{es.duration_minutes} min - €{parseFloat(es.price || 0).toFixed(2)})
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
