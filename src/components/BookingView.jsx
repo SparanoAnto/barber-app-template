@@ -648,7 +648,6 @@ export function BookingView({
 
       {(() => {
         const filteredServices = services.filter(s => {
-          // Nascondi il servizio extra dalla lista principale dei servizi selezionabili dall'utente/admin
           if (configuredExtraService && s.id === configuredExtraService.id) return false
           return s.is_bookable;
         });
@@ -730,7 +729,6 @@ export function BookingView({
 
       {selectedServices.length > 0 && (
         <>
-          {/* Mostra il selettore extra SOLO SE l'amministratore ha censito un servizio extra nel database */}
           {isAdmin && configuredExtraService && (
             <div style={{ padding: '16px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '12px', marginBottom: '24px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
