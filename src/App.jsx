@@ -9,7 +9,9 @@ import { AdminReports } from './components/AdminReports'
 import { AdminStaff } from './components/AdminStaff'
 import { AdminServices } from './components/AdminServices'
 import { AdminClients } from './components/AdminClients'
+import { SalonInfoView } from './components/SalonInfoView'
 import { InstallGuideModal } from './components/InstallGuideModal'
+import { NotificationCenter } from './components/NotificationCenter'
 import './App.css'
 
 export default function App() {
@@ -17,6 +19,65 @@ export default function App() {
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('services')
+
+  // Stato per il banner e per lo storico di sessione con persistenza localStorage e pulizia a 24h
+  const [bannerAlert, setBannerAlert] = useState({ show: false, text: '', type: 'info' })
+  
+  const [notificationHistory, setNotificationHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem('admin_notification_history')
+      const savedTime = localStorage.getItem('admin_notification_timestamp')
+      
+      if (saved && savedTime) {
+        const now = Date.now()
+        const lastTime = parseInt(savedTime, 10)
+        const twentyFourHours = 24 * 60 * 60 * 1000
+
+        // Autopulizia a 24 ore se sono passate più di 24h dall'ultima volta
+        if (now - lastTime > twentyFourHours) {
+          localStorage.removeItem('admin_notification_history')
+          localStorage.removeItem('admin_notification_timestamp')
+          localStorage.removeItem('admin_unread_count')
+          return []
+        }
+        return JSON.parse(saved)
+      }
+    } catch (e) {
+      console.error('Errore caricamento notifiche salvate:', e)
+    }
+    return []
+  })
+
+  const [unreadCount, setUnreadCount] = useState(() => {
+    try {
+      const savedCount = localStorage.getItem('admin_unread_count')
+      const savedTime = localStorage.getItem('admin_notification_timestamp')
+      if (savedCount && savedTime) {
+        const now = Date.now()
+        const lastTime = parseInt(savedTime, 10)
+        if (now - lastTime > 24 * 60 * 60 * 1000) return 0
+        return parseInt(savedCount, 10)
+      }
+    } catch (e) {}
+    return 0
+  })
+
+  const [showNotificationModal, setShowNotificationModal] = useState(false)
+
+  // Effetto per sincronizzare lo storico notifiche e il contatore nel localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('admin_notification_history', JSON.stringify(notificationHistory))
+      localStorage.setItem('admin_unread_count', String(unreadCount))
+      if (notificationHistory.length > 0) {
+        localStorage.setItem('admin_notification_timestamp', String(Date.now()))
+      } else {
+        localStorage.removeItem('admin_notification_timestamp')
+      }
+    } catch (e) {
+      console.error('Errore salvataggio notifiche:', e)
+    }
+  }, [notificationHistory, unreadCount])
 
   const [salonSettings, setSalonSettings] = useState(() => {
     const cachedSettings = localStorage.getItem('salon_settings')
@@ -35,9 +96,9 @@ export default function App() {
       closing_time: '20:00',
       slot_interval_minutes: 30,
       closed_days: [0, 1],
-      primary_color: '#2563eb',
-      accent_color: '#D4AF37',
-      secondary_color: '#1E293B'
+      primary_color: '#C5A059',
+      accent_color: '#C5A059',
+      secondary_color: '#181c24'
     }
   })
 
@@ -58,6 +119,36 @@ export default function App() {
     return map[closedDayText] || [0, 1]
   }
 
+  function playNotificationBell() {
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext
+      if (!AudioContext) return
+      const ctx = new AudioContext()
+
+      const playTone = (freq, startTime, duration) => {
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.type = 'sine'
+        osc.frequency.setValueAtTime(freq, ctx.currentTime + startTime)
+
+        gain.gain.setValueAtTime(0.3, ctx.currentTime + startTime)
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + startTime + duration)
+
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+
+        osc.start(ctx.currentTime + startTime)
+        osc.stop(ctx.currentTime + startTime + duration)
+      }
+
+      playTone(587.33, 0, 0.4)
+      playTone(880, 0.1, 0.5)
+      playTone(1174.66, 0.2, 0.8)
+    } catch (e) {
+      console.log('Audio non riprodotto automaticamente:', e)
+    }
+  }
+
   const [isResettingPassword, setIsResettingPassword] = useState(false)
   const [showPasswordForm, setShowPasswordForm] = useState(false)
   const [newPassword, setNewPassword] = useState('')
@@ -67,7 +158,9 @@ export default function App() {
   const [showProfileForm, setShowProfileForm] = useState(false)
   const [editFirstName, setEditFirstName] = useState('')
   const [editLastName, setEditLastName] = useState('')
+  const [editPhonePrefix, setEditPhonePrefix] = useState('+39')
   const [editPhone, setEditPhone] = useState('')
+  const [editAge, setEditAge] = useState('')
   const [profileLoading, setProfileLoading] = useState(false)
   const [profileMessage, setProfileMessage] = useState({ type: '', text: '' })
 
@@ -141,16 +234,15 @@ export default function App() {
         .eq('id', userId)
         .single()
 
-      if (error || (data && data.is_active === false)) {
+      if (!error && data && data.is_active === false) {
         return false
       }
       return true
     } catch (err) {
-      return false
+      return true
     }
   }
 
-  // Caricamento dati e ascolto Realtime globale (incluso servizi)
   useEffect(() => {
     if (session && (profile?.is_approved || profile?.role === 'admin')) {
       loadSaloneData()
@@ -158,6 +250,7 @@ export default function App() {
     
     let profileSubscription = null
     let servicesSubscription = null
+    let appointmentsSubscription = null
 
     if (session && (profile?.is_approved || profile?.role === 'admin')) {
       if (profile?.role === 'admin') {
@@ -168,9 +261,78 @@ export default function App() {
             fetchPendingCount()
           })
           .subscribe()
+
+        appointmentsSubscription = supabase
+          .channel('app_admin_appointments_realtime')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, async (payload) => {
+            let detailText = ''
+
+            if (payload.eventType === 'INSERT') {
+              const newAppt = payload.new
+              detailText = '📅 Nuovo appuntamento prenotato!'
+              if (newAppt.appointment_date) {
+                const [year, month, day] = newAppt.appointment_date.split('-')
+                const timeFormatted = newAppt.start_time ? newAppt.start_time.substring(0, 5) : ''
+                detailText = `📅 Nuovo appuntamento per il ${day}/${month}/${year}${timeFormatted ? ' alle ' + timeFormatted : ''}`
+              }
+              playNotificationBell()
+            } 
+            else if (payload.eventType === 'DELETE') {
+              const oldAppt = payload.old
+              detailText = '❌ Un appuntamento è stato cancellato!'
+              if (oldAppt && oldAppt.appointment_date) {
+                const [year, month, day] = oldAppt.appointment_date.split('-')
+                const timeFormatted = oldAppt.start_time ? oldAppt.start_time.substring(0, 5) : ''
+                detailText = `❌ Appuntamento cancellato per il ${day}/${month}/${year}${timeFormatted ? ' alle ' + timeFormatted : ''}`
+              }
+              playNotificationBell()
+            } 
+            else if (payload.eventType === 'UPDATE') {
+              const updatedAppt = payload.new
+              const oldAppt = payload.old
+
+              if (updatedAppt.status === 'cancelled' && oldAppt.status !== 'cancelled') {
+                detailText = '❌ Un appuntamento è stato annullato!'
+                if (updatedAppt.appointment_date) {
+                  const [year, month, day] = updatedAppt.appointment_date.split('-')
+                  const timeFormatted = updatedAppt.start_time ? updatedAppt.start_time.substring(0, 5) : ''
+                  detailText = `❌ Appuntamento annullato per il ${day}/${month}/${year}${timeFormatted ? ' alle ' + timeFormatted : ''}`
+                }
+                playNotificationBell()
+              } else {
+                detailText = '✏️ Un appuntamento è stato modificato!'
+                if (updatedAppt.appointment_date) {
+                  const [year, month, day] = updatedAppt.appointment_date.split('-')
+                  const timeFormatted = updatedAppt.start_time ? updatedAppt.start_time.substring(0, 5) : ''
+                  detailText = `✏️ Appuntamento modificato per il ${day}/${month}/${year}${timeFormatted ? ' alle ' + timeFormatted : ''}`
+                }
+                playNotificationBell()
+              }
+            }
+
+            if (detailText) {
+              const newNotification = {
+                id: Date.now(),
+                text: detailText,
+                timestamp: new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+              }
+
+              setNotificationHistory(prev => [newNotification, ...prev].slice(0, 30))
+              setUnreadCount(prev => prev + 1)
+
+              setBannerAlert({
+                show: true,
+                text: detailText,
+                type: 'info'
+              })
+              setTimeout(() => {
+                setBannerAlert({ show: false, text: '', type: 'info' })
+              }, 6000)
+            }
+          })
+          .subscribe()
       }
 
-      // Ascolto Realtime globale per i servizi, così si aggiornano subito ovunque
       servicesSubscription = supabase
         .channel('app_global_services_realtime')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'services' }, () => {
@@ -182,10 +344,10 @@ export default function App() {
     return () => {
       if (profileSubscription) supabase.removeChannel(profileSubscription)
       if (servicesSubscription) supabase.removeChannel(servicesSubscription)
+      if (appointmentsSubscription) supabase.removeChannel(appointmentsSubscription)
     }
   }, [session, profile])
 
-  // Ricarica i servizi ogni volta che l'utente si sposta sulla tab dei servizi (BookingView)
   useEffect(() => {
     if (activeTab === 'services' && session && (profile?.is_approved || profile?.role === 'admin')) {
       loadSaloneData()
@@ -215,7 +377,23 @@ export default function App() {
       if (data) {
         setEditFirstName(data.first_name || '')
         setEditLastName(data.last_name || '')
-        setEditPhone(data.phone || '')
+        setEditAge(data.age !== null && data.age !== undefined ? String(data.age) : '')
+        
+        const fullPhone = data.phone || ''
+        if (fullPhone.startsWith('+')) {
+          const knownPrefixes = ['+39', '+41', '+33', '+49', '+34', '+44']
+          const foundPrefix = knownPrefixes.find(p => fullPhone.startsWith(p))
+          if (foundPrefix) {
+            setEditPhonePrefix(foundPrefix)
+            setEditPhone(fullPhone.replace(foundPrefix, ''))
+          } else {
+            setEditPhonePrefix('+39')
+            setEditPhone(fullPhone)
+          }
+        } else {
+          setEditPhonePrefix('+39')
+          setEditPhone(fullPhone)
+        }
       }
     } catch (err) {
       console.error(err.message)
@@ -264,20 +442,54 @@ export default function App() {
     e.preventDefault()
     setProfileMessage({ type: '', text: '' })
 
-    if (!editFirstName.trim() || !editLastName.trim()) {
-      setProfileMessage({ type: 'error', text: 'Nome e Cognome sono obbligatori.' })
+    const cleanFirstName = editFirstName.trim()
+    const cleanLastName = editLastName.trim()
+    const rawPhone = editPhone.trim()
+    const cleanAge = editAge.trim()
+
+    if (!cleanFirstName || !cleanLastName) {
+      setProfileMessage({ type: 'error', text: 'Nome e Cognome sono campi obbligatori.' })
       return
+    }
+
+    const nameRegex = /^[A-Za-zÀ-ÿ\s'-]+$/
+    if (!nameRegex.test(cleanFirstName) || !nameRegex.test(cleanLastName)) {
+      setProfileMessage({ type: 'error', text: 'Nome e Cognome possono contenere solo lettere e spazi.' })
+      return
+    }
+
+    let formattedPhone = null
+    if (rawPhone) {
+      const numericPhone = rawPhone.replace(/[^0-9]/g, '')
+      if (numericPhone.length < 6 || numericPhone.length > 12) {
+        setProfileMessage({ type: 'error', text: 'Inserisci un numero di cellulare valido.' })
+        return
+      }
+      formattedPhone = `${editPhonePrefix}${numericPhone}`
+    }
+
+    let parsedAge = null
+    if (cleanAge !== '') {
+      parsedAge = parseInt(cleanAge, 10)
+      if (isNaN(parsedAge) || parsedAge < 10 || parsedAge > 120) {
+        setProfileMessage({ type: 'error', text: 'Inserisci un valore di età valido compreso tra 10 e 120 anni.' })
+        return
+      }
     }
 
     setProfileLoading(true)
     try {
+      const updatedData = {
+        first_name: cleanFirstName,
+        last_name: cleanLastName,
+        full_name: `${cleanFirstName} ${cleanLastName}`,
+        phone: formattedPhone,
+        age: parsedAge
+      }
+
       const { error } = await supabase
         .from('profiles')
-        .update({
-          first_name: editFirstName.trim(),
-          last_name: editLastName.trim(),
-          phone: editPhone.trim()
-        })
+        .update(updatedData)
         .eq('id', session.user.id)
 
       if (error) throw error
@@ -285,9 +497,7 @@ export default function App() {
       setProfileMessage({ type: 'success', text: 'Informazioni aggiornate con successo!' })
       setProfile(prev => ({
         ...prev,
-        first_name: editFirstName.trim(),
-        last_name: editLastName.trim(),
-        phone: editPhone.trim()
+        ...updatedData
       }))
       setTimeout(() => {
         setShowProfileForm(false)
@@ -339,22 +549,21 @@ export default function App() {
     setActiveTab('appointments')
   }
 
-  // --- LOADING SCHERMATA PROFESSIONALE (Sostituisce l'icona fissa) ---
   if (loading) {
     return (
       <div style={{ 
         display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', 
-        height: '100vh', backgroundColor: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif' 
+        height: '100vh', backgroundColor: '#0f1115', fontFamily: 'Inter, system-ui, sans-serif' 
       }}>
         <div style={{
           width: '40px',
           height: '40px',
-          border: '3px solid #e2e8f0',
-          borderTop: '3px solid #2563eb',
+          border: '3px solid #2a3241',
+          borderTop: '3px solid #C5A059',
           borderRadius: '50%',
           animation: 'spin 0.8s linear infinite'
         }} />
-        <span style={{ marginTop: '16px', fontSize: '13px', fontWeight: 600, color: '#64748b', letterSpacing: '0.5px' }}>
+        <span style={{ marginTop: '16px', fontSize: '13px', fontWeight: 600, color: '#9ca3af', letterSpacing: '0.5px' }}>
           Caricamento in corso...
         </span>
         <style>{`
@@ -396,8 +605,8 @@ export default function App() {
       <div className="app-container" style={{ padding: '30px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
         <InstallGuideModal salonSettings={salonSettings} />
         <div className="info-card" style={{ maxWidth: '400px', width: '100%', textAlign: 'center' }}>
-          <h2 style={{ color: 'var(--danger-color)', margin: '0 0 10px 0' }}>Account in Attesa</h2>
-          <p style={{ color: 'var(--text-muted)', lineHeight: '1.5' }}>
+          <h2 style={{ color: '#fca5a5', margin: '0 0 10px 0' }}>Account in Attesa</h2>
+          <p style={{ color: '#9ca3af', lineHeight: '1.5' }}>
             Ciao <strong>{profile.first_name}</strong>, la tua registrazione è attiva. Un amministratore deve convalidare il tuo account prima che tu possa prenotare.
           </p>
           <button onClick={() => supabase.auth.signOut()} className="btn-danger" style={{ marginTop: '15px' }}>
@@ -412,14 +621,51 @@ export default function App() {
     <div 
       className="app-container"
       style={{ 
-        '--primary-color': salonSettings.primary_color || '#2563eb',
-        '--accent-color': salonSettings.accent_color || '#D4AF37',
-        '--secondary-color': salonSettings.secondary_color || '#1E293B'
+        '--primary-color': '#C5A059',
+        '--accent-color': '#C5A059',
+        '--secondary-color': '#181c24'
       }}
     >
       <InstallGuideModal salonSettings={salonSettings} />
 
       <div className="top-banner" />
+
+      {/* Modale Centro Notifiche Modulare */}
+      <NotificationCenter 
+        show={showNotificationModal}
+        onClose={() => setShowNotificationModal(false)}
+        notifications={notificationHistory}
+        onClear={() => {
+          setNotificationHistory([])
+          setUnreadCount(0)
+          localStorage.removeItem('admin_notification_history')
+          localStorage.removeItem('admin_unread_count')
+          localStorage.removeItem('admin_notification_timestamp')
+        }}
+      />
+
+      {/* Banner di notifica in tempo reale */}
+      {bannerAlert.show && (
+        <div style={{
+          position: 'fixed', top: '15px', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 9999, width: '90%', maxWidth: '450px',
+          backgroundColor: '#1f2937', border: '1px solid #C5A059', color: '#f3f4f6',
+          padding: '14px 18px', borderRadius: '10px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          animation: 'fadeInOut 0.3s ease-in-out'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '18px' }}>🔔</span>
+            <span style={{ fontSize: '13px', fontWeight: '500', lineHeight: '1.4' }}>{bannerAlert.text}</span>
+          </div>
+          <button 
+            onClick={() => setBannerAlert({ show: false, text: '', type: 'info' })}
+            style={{ background: 'transparent', border: 'none', color: '#9ca3af', fontSize: '16px', cursor: 'pointer', padding: '0 4px', flexShrink: 0 }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       <div className="header-brand" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -431,8 +677,8 @@ export default function App() {
             />
           ) : (
             <div style={{
-              width: '45px', height: '45px', borderRadius: '8px', backgroundColor: 'var(--primary-color)',
-              color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '18px'
+              width: '45px', height: '45px', borderRadius: '8px', backgroundColor: '#C5A059',
+              color: '#0f1115', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '18px'
             }}>
               {salonSettings.salon_name ? salonSettings.salon_name.charAt(0) : 'E'}
             </div>
@@ -445,7 +691,38 @@ export default function App() {
             </span>
           </div>
         </div>
-        {profile?.role === 'admin' && <span className="admin-badge">ADMIN</span>}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {profile?.role === 'admin' && (
+            <>
+              <button 
+                onClick={() => {
+                  setShowNotificationModal(true)
+                  setUnreadCount(0)
+                  localStorage.setItem('admin_unread_count', '0')
+                }}
+                style={{
+                  position: 'relative', background: '#181c24', border: '1px solid var(--border-color)',
+                  borderRadius: '8px', padding: '8px 10px', cursor: 'pointer', color: 'var(--text-main)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px'
+                }}
+                title="Centro Notifiche"
+              >
+                🔔
+                {unreadCount > 0 && (
+                  <span style={{
+                    position: 'absolute', top: '-5px', right: '-5px', backgroundColor: '#ef4444',
+                    color: '#fff', fontSize: '10px', fontWeight: 'bold', padding: '2px 6px',
+                    borderRadius: '50%', border: '2px solid #0f1115'
+                  }}>
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+              <span className="admin-badge">ADMIN</span>
+            </>
+          )}
+        </div>
       </div>
 
       <div style={{ padding: '20px', position: 'relative', zIndex: 1 }}>
@@ -470,16 +747,10 @@ export default function App() {
         )}
 
         {activeTab === 'info' && (
-          <div>
-            <h3 className="section-title">Dove Siamo</h3>
-            <div className="info-card">
-              <p style={{ margin: '8px 0' }}>📍 {salonSettings.address || 'Indirizzo da configurare'}</p>
-              {salonSettings.phone && <p style={{ margin: '8px 0' }}>📞 Tel: {salonSettings.phone}</p>}
-              <p style={{ color: 'var(--danger-color)', fontWeight: 'bold', margin: '15px 0 0 0' }}>
-                💈 Chiuso {salonSettings.closed_day || 'Domenica e Lunedì'}
-              </p>
-            </div>
-          </div>
+          <SalonInfoView 
+            salonSettings={salonSettings} 
+            isAdmin={profile?.role === 'admin'} 
+          />
         )}
 
         {activeTab === 'appointments' && (
@@ -496,31 +767,51 @@ export default function App() {
             <div className="info-card">
               {!showProfileForm ? (
                 <div>
-                  <p style={{ margin: '10px 0' }}><strong>Nome:</strong> {profile?.first_name} {profile?.last_name}</p>
-                  <p style={{ margin: '10px 0' }}><strong>Email:</strong> {profile?.email}</p>
-                  <p style={{ margin: '10px 0' }}><strong>Telefono:</strong> {profile?.phone || 'Non specificato'}</p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px' }}>
+                    <p style={{ margin: 0 }}><strong>Nome:</strong> {profile?.first_name || ''} {profile?.last_name || ''}</p>
+                    <p style={{ margin: 0 }}><strong>Email:</strong> {profile?.email || session?.user?.email}</p>
+                    <p style={{ margin: 0 }}><strong>Età:</strong> {profile?.age !== null && profile?.age !== undefined ? `${profile.age} anni` : 'Non specificata'}</p>
+                    <p style={{ margin: 0 }}><strong>Telefono:</strong> {profile?.phone || 'Non specificato'}</p>
+                  </div>
                   
                   <button 
                     onClick={() => {
                       setEditFirstName(profile?.first_name || '')
                       setEditLastName(profile?.last_name || '')
-                      setEditPhone(profile?.phone || '')
+                      setEditAge(profile?.age !== null && profile?.age !== undefined ? String(profile.age) : '')
+                      
+                      const fullPhone = profile?.phone || ''
+                      if (fullPhone.startsWith('+')) {
+                        const knownPrefixes = ['+39', '+41', '+33', '+49', '+34', '+44']
+                        const foundPrefix = knownPrefixes.find(p => fullPhone.startsWith(p))
+                        if (foundPrefix) {
+                          setEditPhonePrefix(foundPrefix)
+                          setEditPhone(fullPhone.replace(foundPrefix, ''))
+                        } else {
+                          setEditPhonePrefix('+39')
+                          setEditPhone(fullPhone)
+                        }
+                      } else {
+                        setEditPhonePrefix('+39')
+                        setEditPhone(fullPhone)
+                      }
+
                       setShowProfileForm(true)
                       setProfileMessage({ type: '', text: '' })
                     }}
                     style={{
-                      width: '100%', marginTop: '15px', padding: '10px', borderRadius: '8px',
-                      border: '1px solid var(--border-color)', backgroundColor: '#ffffff',
+                      width: '100%', marginTop: '5px', padding: '10px', borderRadius: '8px',
+                      border: '1px solid var(--border-color)', backgroundColor: '#11141b',
                       color: 'var(--text-main)', fontWeight: '600', cursor: 'pointer'
                     }}
                   >
-                    ✏️ Modifica Dati Personali
+                    ✏️ Modifica Dati Anagrafici
                   </button>
                 </div>
               ) : (
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                    <h4 style={{ color: 'var(--text-main)', margin: 0 }}>Modifica Profilo</h4>
+                    <h4 style={{ color: 'var(--text-main)', margin: 0 }}>Modifica Dati Anagrafici</h4>
                     <span 
                       onClick={() => {
                         setShowProfileForm(false)
@@ -535,9 +826,9 @@ export default function App() {
                   {profileMessage.text && (
                     <div style={{
                       padding: '10px', borderRadius: '8px', marginBottom: '10px', fontSize: '13px',
-                      backgroundColor: profileMessage.type === 'error' ? '#fee2e2' : '#d1fae5',
-                      border: profileMessage.type === 'error' ? '1px solid #ef4444' : '1px solid #10b981',
-                      color: profileMessage.type === 'error' ? '#991b1b' : '#065f46'
+                      backgroundColor: profileMessage.type === 'error' ? '#3f2222' : '#143825',
+                      border: profileMessage.type === 'error' ? '1px solid #7f1d1d' : '1px solid #1e462b',
+                      color: profileMessage.type === 'error' ? '#fca5a5' : '#4ade80'
                     }}>
                       {profileMessage.text}
                     </div>
@@ -545,23 +836,76 @@ export default function App() {
 
                   <form onSubmit={handleUpdateProfile} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     <div>
-                      <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Nome</label>
-                      <input type="text" value={editFirstName} onChange={e => setEditFirstName(e.target.value)} style={profileInputStyle} />
+                      <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Nome *</label>
+                      <input 
+                        type="text" 
+                        value={editFirstName} 
+                        onChange={e => setEditFirstName(e.target.value)} 
+                        placeholder="Es. Mario" 
+                        style={profileInputStyle} 
+                        required 
+                      />
                     </div>
                     <div>
-                      <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Cognome</label>
-                      <input type="text" value={editLastName} onChange={e => setEditLastName(e.target.value)} style={profileInputStyle} />
+                      <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Cognome *</label>
+                      <input 
+                        type="text" 
+                        value={editLastName} 
+                        onChange={e => setEditLastName(e.target.value)} 
+                        placeholder="Es. Rossi" 
+                        style={profileInputStyle} 
+                        required 
+                      />
                     </div>
                     <div>
-                      <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Telefono</label>
-                      <input type="tel" value={editPhone} onChange={e => setEditPhone(e.target.value)} style={profileInputStyle} />
+                      <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Età</label>
+                      <input 
+                        type="number" 
+                        min="10" 
+                        max="120" 
+                        value={editAge} 
+                        onChange={e => setEditAge(e.target.value)} 
+                        placeholder="Es. 30" 
+                        style={profileInputStyle} 
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Cellulare</label>
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <select 
+                          value={editPhonePrefix} 
+                          onChange={e => setEditPhonePrefix(e.target.value)}
+                          style={{
+                            ...profileInputStyle,
+                            flex: '0 0 85px',
+                            padding: '10px 4px',
+                            cursor: 'pointer',
+                            fontSize: '13px'
+                          }}
+                        >
+                          <option value="+39">🇮🇹 +39</option>
+                          <option value="+41">🇨🇭 +41</option>
+                          <option value="+33">🇫🇷 +33</option>
+                          <option value="+49">🇩🇪 +49</option>
+                          <option value="+34">🇪🇸 +34</option>
+                          <option value="+44">🇬🇧 +44</option>
+                        </select>
+
+                        <input 
+                          type="tel" 
+                          value={editPhone} 
+                          onChange={e => setEditPhone(e.target.value)} 
+                          placeholder="Es. 3331234567" 
+                          style={{ ...profileInputStyle, flex: 1 }} 
+                        />
+                      </div>
                     </div>
 
                     <button 
                       type="submit" disabled={profileLoading}
                       style={{
                         padding: '10px', borderRadius: '8px', border: 'none',
-                        backgroundColor: 'var(--primary-color)', color: '#FFF', fontWeight: '600', cursor: 'pointer', marginTop: '5px'
+                        backgroundColor: '#C5A059', color: '#0f1115', fontWeight: '600', cursor: 'pointer', marginTop: '5px'
                       }}
                     >
                       {profileLoading ? 'Salvataggio...' : 'Salva Modifiche'}
@@ -580,7 +924,7 @@ export default function App() {
                   }}
                   style={{
                     width: '100%', padding: '10px', borderRadius: '8px',
-                    border: '1px solid var(--border-color)', backgroundColor: '#ffffff',
+                    border: '1px solid var(--border-color)', backgroundColor: '#11141b',
                     color: 'var(--text-main)', fontWeight: '600', cursor: 'pointer'
                   }}
                 >
@@ -605,9 +949,9 @@ export default function App() {
                   {pwdMessage.text && (
                     <div style={{
                       padding: '10px', borderRadius: '8px', marginBottom: '10px', fontSize: '13px',
-                      backgroundColor: pwdMessage.type === 'error' ? '#fee2e2' : '#d1fae5',
-                      border: pwdMessage.type === 'error' ? '1px solid #ef4444' : '1px solid #10b981',
-                      color: pwdMessage.type === 'error' ? '#991b1b' : '#065f46'
+                      backgroundColor: pwdMessage.type === 'error' ? '#3f2222' : '#143825',
+                      border: pwdMessage.type === 'error' ? '1px solid #7f1d1d' : '1px solid #1e462b',
+                      color: pwdMessage.type === 'error' ? '#fca5a5' : '#4ade80'
                     }}>
                       {pwdMessage.text}
                     </div>
@@ -615,14 +959,14 @@ export default function App() {
 
                   <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     <input 
-                      type="password" placeholder="Nuova Password" value={newPassword} 
+                      type="password" placeholder="Nuova Password (min. 6 caratteri)" value={newPassword} 
                       onChange={e => setNewPassword(e.target.value)} style={profileInputStyle}
                     />
                     <button 
                       type="submit" disabled={pwdLoading}
                       style={{
                         padding: '10px', borderRadius: '8px', border: 'none',
-                        backgroundColor: 'var(--danger-color)', color: '#FFF', fontWeight: '600', cursor: 'pointer'
+                        backgroundColor: '#7f1d1d', color: '#fca5a5', fontWeight: '600', cursor: 'pointer'
                       }}
                     >
                       {pwdLoading ? 'Aggiornamento...' : 'Aggiorna Password'}
@@ -660,9 +1004,9 @@ export default function App() {
                 onClick={() => setAdminSubTab('approvals')}
                 style={{
                   flex: 1, minWidth: '90px', padding: '10px 6px', borderRadius: '8px',
-                  border: adminSubTab === 'approvals' ? '1px solid var(--primary-color)' : '1px solid var(--border-color)',
-                  backgroundColor: adminSubTab === 'approvals' ? 'var(--primary-color)' : '#ffffff',
-                  color: adminSubTab === 'approvals' ? '#FFF' : 'var(--text-main)',
+                  border: adminSubTab === 'approvals' ? '1px solid #C5A059' : '1px solid var(--border-color)',
+                  backgroundColor: adminSubTab === 'approvals' ? '#C5A059' : '#181c24',
+                  color: adminSubTab === 'approvals' ? '#0f1115' : 'var(--text-main)',
                   fontWeight: '600', fontSize: '0.75rem', cursor: 'pointer'
                 }}
               >
@@ -673,9 +1017,9 @@ export default function App() {
                 onClick={() => setAdminSubTab('clients')}
                 style={{
                   flex: 1, minWidth: '90px', padding: '10px 6px', borderRadius: '8px',
-                  border: adminSubTab === 'clients' ? '1px solid var(--primary-color)' : '1px solid var(--border-color)',
-                  backgroundColor: adminSubTab === 'clients' ? 'var(--primary-color)' : '#ffffff',
-                  color: adminSubTab === 'clients' ? '#FFF' : 'var(--text-main)',
+                  border: adminSubTab === 'clients' ? '1px solid #C5A059' : '1px solid var(--border-color)',
+                  backgroundColor: adminSubTab === 'clients' ? '#C5A059' : '#181c24',
+                  color: adminSubTab === 'clients' ? '#0f1115' : 'var(--text-main)',
                   fontWeight: '600', fontSize: '0.75rem', cursor: 'pointer'
                 }}
               >
@@ -686,9 +1030,9 @@ export default function App() {
                 onClick={() => setAdminSubTab('services')}
                 style={{
                   flex: 1, minWidth: '90px', padding: '10px 6px', borderRadius: '8px',
-                  border: adminSubTab === 'services' ? '1px solid var(--primary-color)' : '1px solid var(--border-color)',
-                  backgroundColor: adminSubTab === 'services' ? 'var(--primary-color)' : '#ffffff',
-                  color: adminSubTab === 'services' ? '#FFF' : 'var(--text-main)',
+                  border: adminSubTab === 'services' ? '1px solid #C5A059' : '1px solid var(--border-color)',
+                  backgroundColor: adminSubTab === 'services' ? '#C5A059' : '#181c24',
+                  color: adminSubTab === 'services' ? '#0f1115' : 'var(--text-main)',
                   fontWeight: '600', fontSize: '0.75rem', cursor: 'pointer'
                 }}
               >
@@ -699,9 +1043,9 @@ export default function App() {
                 onClick={() => setAdminSubTab('staff')}
                 style={{
                   flex: 1, minWidth: '90px', padding: '10px 6px', borderRadius: '8px',
-                  border: adminSubTab === 'staff' ? '1px solid var(--primary-color)' : '1px solid var(--border-color)',
-                  backgroundColor: adminSubTab === 'staff' ? 'var(--primary-color)' : '#ffffff',
-                  color: adminSubTab === 'staff' ? '#FFF' : 'var(--text-main)',
+                  border: adminSubTab === 'staff' ? '1px solid #C5A059' : '1px solid var(--border-color)',
+                  backgroundColor: adminSubTab === 'staff' ? '#C5A059' : '#181c24',
+                  color: adminSubTab === 'staff' ? '#0f1115' : 'var(--text-main)',
                   fontWeight: '600', fontSize: '0.75rem', cursor: 'pointer'
                 }}
               >
@@ -712,9 +1056,9 @@ export default function App() {
                 onClick={() => setAdminSubTab('reports')}
                 style={{
                   flex: 1, minWidth: '90px', padding: '10px 6px', borderRadius: '8px',
-                  border: adminSubTab === 'reports' ? '1px solid var(--primary-color)' : '1px solid var(--border-color)',
-                  backgroundColor: adminSubTab === 'reports' ? 'var(--primary-color)' : '#ffffff',
-                  color: adminSubTab === 'reports' ? '#FFF' : 'var(--text-main)',
+                  border: adminSubTab === 'reports' ? '1px solid #C5A059' : '1px solid var(--border-color)',
+                  backgroundColor: adminSubTab === 'reports' ? '#C5A059' : '#181c24',
+                  color: adminSubTab === 'reports' ? '#0f1115' : 'var(--text-main)',
                   fontWeight: '600', fontSize: '0.75rem', cursor: 'pointer'
                 }}
               >
@@ -769,7 +1113,7 @@ const profileInputStyle = {
   padding: '10px 12px',
   borderRadius: '8px',
   border: '1px solid var(--border-color)',
-  backgroundColor: '#ffffff',
+  backgroundColor: '#11141b',
   color: 'var(--text-main)',
   boxSizing: 'border-box',
   fontSize: '14px',

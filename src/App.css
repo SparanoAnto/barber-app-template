@@ -1,20 +1,21 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
-  --bg-light: #f8fafc;
-  --bg-top-bar: #e2e8f0;
-  --bg-card: #ffffff;
-  --text-main: #1e293b;
-  --text-muted: #64748b;
-  --border-color: #cbd5e1;
+  /* Palette Barber Shop moderna e scura */
+  --bg-light: #0f1115;
+  --bg-top-bar: #181c24;
+  --bg-card: #181c24;
+  --text-main: #f3f4f6;
+  --text-muted: #9ca3af;
+  --border-color: #2a323d;
   
   /* Valori dinamici / fallback per la gestione multi-salone da tabella settings */
-  --primary-color: #2563eb; 
-  --accent-color: #D4AF37;    /* Terzo/Secondo colore d'accento per badge e dettagli speciali */
-  --secondary-color: #1E293B; /* Terza colonna colore di supporto futura */
+  --primary-color: #111827; 
+  --accent-color: #C5A059;    /* Oro elegante per badge e dettagli speciali */
+  --secondary-color: #374151; /* Colore di supporto */
   
-  --danger-color: #dc2626;
-  --success-color: #059669;
+  --danger-color: #ef4444;
+  --success-color: #10b981;
 }
 
 body {
@@ -35,7 +36,7 @@ body {
   color: var(--text-main);
   padding-bottom: calc(85px + env(safe-area-inset-bottom));
   position: relative;
-  box-shadow: 0 4px 25px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 25px rgba(0, 0, 0, 0.4);
   box-sizing: border-box;
   overflow-x: hidden; 
 }
@@ -51,9 +52,10 @@ body {
 
 /* Fascia Superiore */
 .top-banner {
-  background-color: var(--primary-color);
+  background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
   height: 8px;
   width: 100%;
+  border-bottom: 1px solid var(--accent-color);
   transition: background-color 0.3s ease;
 }
 
@@ -64,7 +66,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background-color: rgba(255, 255, 255, 0.95);
+  background-color: var(--bg-card);
   backdrop-filter: blur(5px);
   position: relative;
   z-index: 1;
@@ -82,18 +84,19 @@ body {
 
 .brand-subtitle {
   font-family: 'Inter', sans-serif;
-  font-weight: 500;
-  font-size: 0.9rem;
-  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--accent-color);
   margin-top: 2px;
   display: block;
+  letter-spacing: 0.5px;
 }
 
 /* Titoli Sezioni */
 .section-title {
   font-family: 'Inter', sans-serif;
   font-size: 1.25rem;
-  color: var(--text-main);
+  color: var(--accent-color);
   margin-top: 0;
   margin-bottom: 15px;
   font-weight: 700;
@@ -104,8 +107,8 @@ body {
 
 /* Badge e Bottoni */
 .admin-badge {
-  background: var(--accent-color, var(--primary-color));
-  color: #ffffff;
+  background: var(--accent-color);
+  color: #0f1115;
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 11px;
@@ -137,7 +140,7 @@ body {
   border-radius: 10px;
   padding: 20px;
   margin-top: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
@@ -164,7 +167,7 @@ body {
 }
 
 .time-slot-card {
-  background: #ffffff;
+  background: #11141b;
   border: 1px solid var(--border-color);
   color: var(--text-main);
   padding: 12px 5px;
@@ -177,13 +180,14 @@ body {
 }
 
 .time-slot-card:hover {
-  border-color: var(--primary-color);
+  border-color: var(--accent-color);
 }
 
 .time-slot-card.selected {
-  background-color: var(--primary-color);
-  border-color: var(--primary-color);
-  color: #ffffff;
+  background-color: var(--accent-color);
+  border-color: var(--accent-color);
+  color: #0f1115;
+  font-weight: 700;
 }
 
 /* ========================================================= */
