@@ -1,9 +1,9 @@
 {
-  "short_name": "Elitè Salon",
-  "name": "Elitè Salon - Hair & Beauty",
+  "short_name": "Elitè Barber",
+  "name": "Elitè Barber - Hair",
   "icons": [
     {
-      "src": "LogoElitèSalon.png",
+      "src": "LogoEliteBarber.png",
       "sizes": "512x512",
       "type": "image/png"
     }
