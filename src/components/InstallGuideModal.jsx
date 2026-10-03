@@ -65,38 +65,40 @@ export function InstallGuideModal({ salonSettings = {} }) {
       right: '15px',
       maxWidth: '450px',
       margin: '0 auto',
-      backgroundColor: '#1e293b',
-      border: '1px solid rgba(255, 255, 255, 0.1)',
-      borderLeft: '4px solid var(--primary-color)',
+      backgroundColor: '#181c24',
+      border: '1px solid var(--border-color)',
+      borderLeft: '4px solid var(--accent-color)',
       borderRadius: '12px',
       padding: '18px',
       zIndex: 999,
-      boxShadow: '0 10px 25px rgba(0,0,0,0.3)',
-      color: '#FFF',
-      '--primary-color': salonSettings.primary_color || '#2563eb',
-      '--accent-color': salonSettings.accent_color || '#D4AF37',
+      boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+      color: 'var(--text-main)',
+      '--accent-color': '#C5A059',
+      '--text-main': '#f3f4f6',
+      '--text-muted': '#9ca3af',
+      '--border-color': '#2a3241',
       fontFamily: 'Inter, system-ui, -apple-system, sans-serif'
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-        <h4 style={{ margin: 0, color: 'var(--accent-color, #f59e0b)', fontSize: '0.95rem', fontWeight: 700 }}>
+        <h4 style={{ margin: 0, color: 'var(--accent-color)', fontSize: '0.95rem', fontWeight: 700 }}>
           📲 Installa l'App del Salone
         </h4>
         <span 
           onClick={handleDismiss} 
-          style={{ cursor: 'pointer', fontSize: '16px', color: '#94a3b8', padding: '4px', lineHeight: 1 }}
+          style={{ cursor: 'pointer', fontSize: '16px', color: 'var(--text-muted)', padding: '4px', lineHeight: 1 }}
           title="Chiudi"
         >
           ✕
         </span>
       </div>
 
-      <p style={{ fontSize: '13px', color: '#cbd5e1', margin: '0 0 14px 0', lineHeight: '1.4' }}>
+      <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '0 0 14px 0', lineHeight: '1.4' }}>
         Per la migliore esperienza e per prenotare in un click, aggiungi l'app allo schermo del tuo telefono!
       </p>
 
       {/* Istruzioni iOS */}
       {isIOS ? (
-        <div style={{ backgroundColor: 'rgba(255,255,255,0.06)', padding: '12px', borderRadius: '8px', fontSize: '12px', lineHeight: '1.5', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.04)' }}>
+        <div style={{ backgroundColor: '#11141b', padding: '12px', borderRadius: '8px', fontSize: '12px', lineHeight: '1.5', color: 'var(--text-main)', border: '1px solid var(--border-color)' }}>
           1. Tocca il tasto <strong>Condividi</strong> ⎋ (in basso al centro su Safari).<br />
           2. Scorri in basso e seleziona <strong>"Aggiungi alla schermata Home"</strong> ➕.
         </div>
@@ -108,21 +110,21 @@ export function InstallGuideModal({ salonSettings = {} }) {
             style={{
               width: '100%',
               padding: '12px',
-              backgroundColor: 'var(--primary-color)',
-              color: '#FFF',
+              backgroundColor: 'var(--accent-color)',
+              color: '#0f1115',
               border: 'none',
               borderRadius: '8px',
               fontWeight: 700,
               cursor: 'pointer',
               fontSize: '13px',
-              boxShadow: '0 4px 10px rgba(37, 99, 235, 0.3)',
+              boxShadow: '0 4px 10px rgba(0, 0, 0, 0.3)',
               transition: 'background 0.2s'
             }}
           >
             Installa Ora
           </button>
         ) : (
-          <div style={{ backgroundColor: 'rgba(255,255,255,0.06)', padding: '12px', borderRadius: '8px', fontSize: '12px', lineHeight: '1.5', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.04)' }}>
+          <div style={{ backgroundColor: '#11141b', padding: '12px', borderRadius: '8px', fontSize: '12px', lineHeight: '1.5', color: 'var(--text-main)', border: '1px solid var(--border-color)' }}>
             Tocca i <strong>3 pallini in alto a destra</strong> e seleziona <strong>"Aggiungi a schermata Home"</strong> o <strong>"Installa app"</strong>.
           </div>
         )

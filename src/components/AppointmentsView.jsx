@@ -1,6 +1,19 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 
+// Funzioni di utilità esterne per evitare problemi di hoisting
+function timeToMinutes(timeStr) {
+  if (!timeStr) return 0
+  const parts = timeStr.split(':')
+  return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10)
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return 'N/D'
+  const [year, month, day] = dateStr.split('-')
+  return `${day}/${month}/${year}`
+}
+
 export function AppointmentsView({ 
   userId, 
   isAdmin, 
@@ -15,10 +28,14 @@ export function AppointmentsView({
   
   const [selectedDate, setSelectedDate] = useState(new Date().toLocaleDateString('sv-SE'))
 
-  // Stati aggiuntivi per gestire le chiusure e le eccezioni/ferie
   const [shopClosures, setShopClosures] = useState([])
+  const [salonExceptions, setSalonExceptions] = useState([])
   const [barberExceptions, setBarberExceptions] = useState([])
   const [barberWorkingDays, setBarberWorkingDays] = useState([])
+  const [salonWeeklyHours, setSalonWeeklyHours] = useState([])
+
+  // Stato per la modale di dettaglio dell'appuntamento (click sulla card)
+  const [selectedAppointmentDetail, setSelectedAppointmentDetail] = useState(null)
 
   useEffect(() => {
     if (isAdmin) {
@@ -34,13 +51,48 @@ export function AppointmentsView({
     }
   }, [userId, isAdmin, selectedDate, selectedBarberId])
 
+  // --- INTEGRAZIONE SUPABASE REALTIME (SOLO PER AGGIORNARE LA GRIGLIA) ---
+  useEffect(() => {
+    if (!userId) return
+
+    const channel = supabase
+      .channel('public:appointments-realtime-grid')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'appointments' },
+        (payload) => {
+          if (payload.eventType === 'UPDATE' && payload.new.status === 'cancelled') {
+            setAppointments((prev) => prev.filter(app => app.id !== payload.new.id))
+            setSelectedAppointmentDetail((currentDetail) => 
+              currentDetail?.id === payload.new.id ? null : currentDetail
+            )
+          }
+
+          // Per qualsiasi INSERT, UPDATE o DELETE, ricarichiamo i dati della griglia in tempo reale
+          setTimeout(() => {
+            fetchAppointments()
+          }, 200)
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [userId, isAdmin, selectedDate, selectedBarberId])
+  // -------------------------------------------------
+
   async function fetchBarbers() {
-    const { data } = await supabase.from('barbers').select('id, name').eq('is_active', true)
+    const { data } = await supabase
+      .from('barbers')
+      .select('id, name')
+      .eq('is_active', true)
+      .order('name', { ascending: true })
+      
     if (data) setBarbers(data)
   }
 
   async function fetchAppointments() {
-    setLoading(true)
     setErrorMsg(null)
 
     try {
@@ -82,37 +134,88 @@ export function AppointmentsView({
           .order('start_time', { ascending: false })
       }
 
-      // 1. Chiusure collettive del salone per la data selezionata
       const closuresQuery = supabase
         .from('shop_closures')
         .select('*')
         .lte('start_date', selectedDate)
         .gte('end_date', selectedDate)
 
-      // 2. Eccezioni / ferie dei singoli operatori per la data selezionata
+      const salonExceptionsQuery = supabase
+        .from('salon_exceptions')
+        .select('*')
+        .lte('start_date', selectedDate)
+        .gte('end_date', selectedDate)
+
       const exceptionsQuery = supabase
         .from('barber_exceptions')
         .select('*')
         .eq('date', selectedDate)
 
-      // 3. Orari di lavoro specifici / eccezioni settimanali degli operatori
       const workingDaysQuery = supabase
         .from('barber_working_days')
+        .select('*')
+
+      const weeklyHoursQuery = supabase
+        .from('salon_weekly_hours')
         .select('*')
 
       const [
         { data, error },
         { data: closuresData },
+        { data: salonExceptionsData },
         { data: exceptionsData },
-        { data: workingDaysData }
-      ] = await Promise.all([query, closuresQuery, exceptionsQuery, workingDaysQuery])
+        { data: workingDaysData },
+        { data: weeklyHoursData }
+      ] = await Promise.all([
+        query, 
+        closuresQuery, 
+        salonExceptionsQuery, 
+        exceptionsQuery, 
+        workingDaysQuery, 
+        weeklyHoursQuery
+      ])
 
       if (error) throw error
 
-      setAppointments(data || [])
+      // DEDUPLICAZIONE UNIVERSALE E PULITA
+      const appointmentsMap = new Map()
+      
+      ;(data || []).forEach(item => {
+        if (!appointmentsMap.has(item.id)) {
+          appointmentsMap.set(item.id, {
+            ...item,
+            appointment_services: item.appointment_services ? [...item.appointment_services] : []
+          })
+        } else {
+          const existing = appointmentsMap.get(item.id)
+          if (item.appointment_services) {
+            item.appointment_services.forEach(newServ => {
+              const exists = existing.appointment_services.some(
+                s => s.service_id === newServ.service_id
+              )
+              if (!exists) {
+                existing.appointment_services.push(newServ)
+              }
+            })
+          }
+        }
+      })
+
+      let uniqueAppointments = Array.from(appointmentsMap.values())
+
+      const seenIds = new Set()
+      uniqueAppointments = uniqueAppointments.filter(item => {
+        if (seenIds.has(item.id)) return false
+        seenIds.add(item.id)
+        return true
+      })
+
+      setAppointments(uniqueAppointments)
       setShopClosures(closuresData || [])
+      setSalonExceptions(salonExceptionsData || [])
       setBarberExceptions(exceptionsData || [])
       setBarberWorkingDays(workingDaysData || [])
+      setSalonWeeklyHours(weeklyHoursData || [])
 
     } catch (err) {
       console.error('Errore Supabase:', err.message)
@@ -135,7 +238,7 @@ export function AppointmentsView({
     }
 
     if (diffMs < fifteenMinutesMs) {
-      return { canModify: true, canCancel: false, reason: 'Impossibile annullare a meno di 15 minuti dall\'orario.' }
+      return { canModify: false, canCancel: false, reason: 'Impossibile modificare o annullare a meno di 15 minuti dall\'orario.' }
     }
 
     return { canModify: true, canCancel: true, reason: '' }
@@ -161,16 +264,10 @@ export function AppointmentsView({
       if (error) throw error
 
       alert("Appuntamento annullato con successo!")
-      fetchAppointments()
+      setSelectedAppointmentDetail(null)
     } catch (err) {
       alert("Errore durante l'annullamento: " + err.message)
     }
-  }
-
-  function formatDate(dateStr) {
-    if (!dateStr) return 'N/D'
-    const [year, month, day] = dateStr.split('-')
-    return `${day}/${month}/${year}`
   }
 
   function sendWhatsAppReminder(item) {
@@ -198,33 +295,58 @@ export function AppointmentsView({
     window.open(url, '_blank')
   }
 
-  const todayString = new Date().toLocaleDateString('sv-SE')
-  const imminentClientAppointment = !isAdmin ? appointments.find(item => {
-    const isToday = item.appointment_date === todayString
-    const now = new Date()
-    const currentTimeMinutes = now.getHours() * 60 + now.getMinutes()
-    
-    if (isToday && item.start_time) {
-      const [h, m] = item.start_time.split(':').map(Number)
-      const appointmentMinutes = h * 60 + m
-      return appointmentMinutes > currentTimeMinutes
-    }
-    return false
-  }) : null
+  const dateObj = new Date(selectedDate + 'T00:00:00')
+  const dayOfWeek = dateObj.getDay()
 
-  // Generatore dinamico slot orari basato su settings
-  const openingStr = salonSettings.opening_time || '08:30'
-  const closingStr = salonSettings.closing_time || '20:00'
+  const currentSalonException = salonExceptions.find(e => {
+    if (!e.start_date || !e.end_date) return e.date === selectedDate
+    return selectedDate >= e.start_date && selectedDate <= e.end_date
+  })
+
+  const currentWeeklyRule = salonWeeklyHours.find(w => w.day_of_week === dayOfWeek) || {}
+
+  let isWeeklyClosed = currentWeeklyRule.is_closed || false
+  
+  const isSalonExceptionClosed = currentSalonException && !currentSalonException.opening_time && !currentSalonException.closing_time && !currentSalonException.start_time
+  const isShopClosedToday = shopClosures.length > 0 || isWeeklyClosed || isSalonExceptionClosed
+
+  let shopClosureReason = shopClosures.length > 0 
+    ? (shopClosures[0]?.reason || 'Chiusura Salone') 
+    : (isWeeklyClosed ? 'Giorno di Chiusura Settimanale' : (isSalonExceptionClosed ? (currentSalonException?.reason || 'Chiusura Straordinaria') : ''))
+
+  let openingStr = '08:30'
+  let closingStr = '20:00'
+
+  if (!isWeeklyClosed && currentWeeklyRule.opening_time && currentWeeklyRule.closing_time) {
+    openingStr = currentWeeklyRule.opening_time.slice(0, 5)
+    closingStr = currentWeeklyRule.closing_time.slice(0, 5)
+  }
+
+  if (currentSalonException) {
+    if (currentSalonException.opening_time) {
+      openingStr = currentSalonException.opening_time.slice(0, 5)
+    }
+    if (currentSalonException.closing_time) {
+      closingStr = currentSalonException.closing_time.slice(0, 5)
+    }
+  }
 
   const [openHour, openMinute] = openingStr.split(':').map(Number)
   const [closeHour, closeMinute] = closingStr.split(':').map(Number)
 
   const timeSlots = []
   let currentTotalMinutes = openHour * 60 + (openMinute || 0)
-  const endTotalMinutes = closeHour * 60 + (closeMinute || 0)
+  let endTotalMinutes = closeHour * 60 + (closeMinute || 0)
   const slotStep = salonSettings.slot_interval_minutes || 30
 
-  while (currentTotalMinutes < endTotalMinutes) {
+  let absoluteClosingMinutes = endTotalMinutes
+  if (!isWeeklyClosed && currentWeeklyRule.closing_time) {
+    absoluteClosingMinutes = Math.max(endTotalMinutes, timeToMinutes(currentWeeklyRule.closing_time.slice(0, 5)))
+  }
+  
+  const gridEndMinutes = currentSalonException?.closing_time ? Math.max(endTotalMinutes, timeToMinutes(currentSalonException.closing_time.slice(0, 5))) : absoluteClosingMinutes
+
+  while (currentTotalMinutes < gridEndMinutes) {
     const h = Math.floor(currentTotalMinutes / 60)
     const m = currentTotalMinutes % 60
     const hStr = String(h).padStart(2, '0')
@@ -233,55 +355,50 @@ export function AppointmentsView({
     currentTotalMinutes += slotStep
   }
 
-  // Determinazione degli operatori da visualizzare nella griglia
+  const dayStartMinutes = timeSlots.length > 0 ? timeToMinutes(timeSlots[0]) : (openHour * 60 + (openMinute || 0))
+
   const gridBarbers = isAdmin && selectedBarberId !== 'all'
     ? barbers.filter(b => b.id === selectedBarberId)
     : barbers
 
-  // Verifica chiusura globale negozio
-  const isShopClosedToday = shopClosures.length > 0
-  const shopClosureReason = isShopClosedToday ? shopClosures[0].reason : ''
-
-  // Funzione di supporto per convertire orari in minuti
-  function timeToMinutes(timeStr) {
-    if (!timeStr) return 0
-    const parts = timeStr.split(':')
-    return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10)
-  }
-
-  // Controllo stato slot per il singolo operatore (LOGICA CORRETTA)
   function getBarberSlotStatus(barberId, timeSlot) {
     if (isShopClosedToday) {
-      return { isBlocked: true, reason: shopClosureReason || 'Chiusura Salone' }
+      return { isBlocked: true, reason: shopClosureReason || 'Salone Chiuso' }
     }
 
-    // Giorno della settimana (0 = Domenica, 1 = Lunedì, 2 = Martedì, ...)
-    const dateObj = new Date(selectedDate + 'T00:00:00')
-    const dayOfWeek = dateObj.getDay()
-
     const slotMin = timeToMinutes(timeSlot)
-    const salonStartMin = timeToMinutes(salonSettings.opening_time || '08:30')
-    const salonEndMin = timeToMinutes(salonSettings.closing_time || '20:00')
+    const salonStartMin = timeToMinutes(openingStr)
+    const salonEndMin = timeToMinutes(closingStr)
 
-    // Filtriamo i record di working days per questo specifico barbiere
+    if (slotMin >= salonEndMin) {
+      return { isBlocked: true, reason: currentSalonException?.reason || 'Chiusura Salone' }
+    }
+
+    if (currentSalonException && currentSalonException.start_time && currentSalonException.end_time) {
+      const excBlockStart = timeToMinutes(currentSalonException.start_time)
+      const excBlockEnd = timeToMinutes(currentSalonException.end_time)
+      if (slotMin >= excBlockStart && slotMin < excBlockEnd) {
+        return { isBlocked: true, reason: currentSalonException.reason || 'Chiusura Straordinaria' }
+      }
+    }
+
+    if (slotMin < salonStartMin) {
+      return { isBlocked: true, reason: 'Fuori Orario' }
+    }
+
     const barberRules = barberWorkingDays.filter(w => w.barber_id === barberId)
 
     if (barberRules.length === 0) {
-      // 1. Se non ci sono record in assoluto per questo operatore, rispetta gli orari del salone
       if (slotMin < salonStartMin || slotMin >= salonEndMin) {
         return { isBlocked: true, reason: 'Fuori Orario' }
       }
     } else {
-      // 2. Se ci sono record, cerchiamo se ce n'è uno per il giorno corrente della settimana
       const workingRule = barberRules.find(w => w.day_of_week === dayOfWeek)
 
       if (!workingRule) {
-        // Se l'operatore ha dei record in barber_working_days ma NESSUNO per questo giorno, significa che oggi NON lavora
         return { isBlocked: true, reason: 'Fuori Orario' }
       }
 
-      // Se il record esiste per questo giorno, controlliamo gli orari:
-      // Se start_time o end_time sono vuoti/null, usa gli orari standard del salone
       const workStartMin = workingRule.start_time ? timeToMinutes(workingRule.start_time) : salonStartMin
       const workEndMin = workingRule.end_time ? timeToMinutes(workingRule.end_time) : salonEndMin
 
@@ -290,7 +407,6 @@ export function AppointmentsView({
       }
     }
 
-    // 3. Controllo eccezioni / ferie / permessi del barbiere (prevalgono)
     const exception = barberExceptions.find(e => e.barber_id === barberId && e.date === selectedDate)
     if (exception) {
       if (!exception.start_time || !exception.end_time) {
@@ -306,55 +422,288 @@ export function AppointmentsView({
     return { isBlocked: false, reason: '' }
   }
 
+  function renderAppointmentCardCompact(item) {
+    const formattedTime = item.start_time ? item.start_time.slice(0, 5) : ''
+    const endTime = item.end_time ? item.end_time.slice(0, 5) : ''
+    
+    const startMin = timeToMinutes(formattedTime)
+    const endMin = timeToMinutes(endTime)
+    const durationMinutes = Math.max(endMin - startMin, salonSettings.slot_interval_minutes || 30)
+    
+    const slotHeightPx = 55 
+    const slotInterval = salonSettings.slot_interval_minutes || 30
+    
+    const minutesFromDayStart = startMin - dayStartMinutes
+    const topPx = (minutesFromDayStart / slotInterval) * slotHeightPx
+    
+    const totalSlots = durationMinutes / slotInterval
+    const calculatedHeight = totalSlots * slotHeightPx
+
+    const finalHeight = Math.max(calculatedHeight - 2, 55)
+
+    const sortedServices = item.appointment_services
+      ?.map((as) => as.services)
+      .filter(Boolean)
+      .sort((a, b) => (b.duration_minutes || 0) - (a.duration_minutes || 0)) || []
+
+    const mainService = sortedServices.map(s => s.name).join(' / ') || 'Servizio'
+
+    let clientName = 'Cliente'
+    if (item.custom_client_name) {
+      clientName = item.custom_client_name
+    } else if (item.offline_clients?.full_name) {
+      clientName = item.offline_clients.full_name
+    } else if (item.profiles?.full_name) {
+      clientName = item.profiles.full_name
+    }
+
+    return (
+      <div
+        key={item.id}
+        onClick={() => setSelectedAppointmentDetail(item)}
+        style={{
+          position: 'absolute',
+          top: `${Math.max(0, topPx)}px`,
+          left: '4px',
+          right: '4px',
+          height: `${finalHeight}px`,
+          zIndex: 10,
+          backgroundColor: 'rgba(197, 160, 89, 0.18)',
+          borderRadius: '6px',
+          padding: '4px 6px',
+          border: '1px solid var(--accent-color)',
+          borderLeft: '4px solid var(--accent-color)',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          boxSizing: 'border-box',
+          overflow: 'hidden',
+          boxShadow: '0 2px 6px rgba(0, 0, 0, 0.4)',
+          cursor: 'pointer',
+          transition: 'transform 0.1s ease, background-color 0.1s ease'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', lineHeight: '1.1' }}>
+          <span style={{ fontWeight: 700, fontSize: '0.8rem', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {clientName}
+          </span>
+          <span style={{ color: 'var(--accent-color)', fontWeight: 800, fontSize: '0.8rem', whiteSpace: 'nowrap', marginLeft: '4px' }}>
+            {item.total_price ? `€${parseFloat(item.total_price).toFixed(2)}` : ''}
+          </span>
+        </div>
+
+        <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: '1.1' }}>
+          <strong style={{ color: 'var(--text-main)' }}>{formattedTime}-{endTime}</strong> • {mainService}
+        </div>
+
+        {isAdmin && (
+          <div style={{ display: 'flex', gap: '3px', alignItems: 'center', marginTop: 'auto' }}>
+            <button
+              onClick={(e) => { e.stopPropagation(); sendWhatsAppReminder(item); }}
+              title="Invia promemoria WhatsApp"
+              style={{ flex: 1, backgroundColor: '#22c55e', color: '#fff', border: 'none', borderRadius: '3px', padding: '2px 2px', fontSize: '9.5px', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            >
+              💬 WhatsApp
+            </button>
+            {onEditAppointment && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onEditAppointment(item); }}
+                title="Modifica appuntamento"
+                style={{ flex: 1, backgroundColor: 'var(--accent-color)', color: '#0f1115', border: 'none', borderRadius: '3px', padding: '2px 2px', fontSize: '9.5px', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+              >
+                ✏ Modifica
+              </button>
+            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); handleCancelAppointment(item); }}
+              title="Annulla appuntamento"
+              style={{ backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '3px', padding: '2px 5px', fontSize: '9.5px', cursor: 'pointer', fontWeight: 600 }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  function renderAppointmentCard(item) {
+    const formattedTime = item.start_time ? item.start_time.slice(0, 5) : ''
+    const endTime = item.end_time ? item.end_time.slice(0, 5) : ''
+    const formattedDateStr = formatDate(item.appointment_date)
+    const barberName = item.barbers?.name || 'Operatore'
+
+    let clientName = 'Cliente'
+    if (item.custom_client_name) {
+      clientName = item.custom_client_name
+    } else if (item.offline_clients?.full_name) {
+      clientName = item.offline_clients.full_name
+    } else if (item.profiles?.full_name) {
+      clientName = item.profiles.full_name
+    }
+
+    const clientPhone = item.offline_clients?.phone || item.profiles?.phone || 'Non disponibile'
+
+    const servicesList = item.appointment_services
+      ?.map((as) => as.services)
+      .filter(Boolean) || []
+
+    const now = new Date().getTime()
+    const appointmentDateTime = new Date(`${item.appointment_date}T${item.start_time}`).getTime()
+    const isPast = appointmentDateTime < now
+
+    const { canModify, canCancel, reason } = checkAppointmentPermissions(item.appointment_date, item.start_time)
+
+    return (
+      <div 
+        key={item.id} 
+        onClick={() => setSelectedAppointmentDetail(item)}
+        style={{ 
+          backgroundColor: '#181c24', 
+          borderRadius: '10px', 
+          padding: '16px', 
+          border: '1px solid var(--border-color)',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+          display: 'flex', 
+          flexDirection: 'column', 
+          gap: '12px',
+          opacity: isPast ? 0.75 : 1,
+          cursor: 'pointer'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+          <div style={{ fontWeight: 700, color: 'var(--text-main)', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span>📅</span> {formattedDateStr} 
+            <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>|</span> 
+            <span>⏰</span> {formattedTime} {endTime ? `- ${endTime}` : ''}
+          </div>
+          {item.total_price && (
+            <div style={{ color: 'var(--accent-color)', fontWeight: 800, fontSize: '0.95rem' }}>
+              €{parseFloat(item.total_price).toFixed(2)}
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span>👤</span> Cliente: <strong style={{ color: 'var(--text-main)' }}>{clientName}</strong> ({clientPhone})
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span>✂️</span> Operatore: <strong style={{ color: 'var(--text-main)' }}>{barberName}</strong>
+          </div>
+
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+            <span style={{ fontWeight: 600, display: 'block', marginBottom: '4px', color: 'var(--text-main)' }}>Servizi prenotati:</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '4px' }}>
+              {servicesList.length > 0 ? (
+                servicesList.map((srv, idx) => (
+                  <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', backgroundColor: '#11141b', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                    <span style={{ color: 'var(--text-main)', fontWeight: 500 }}>• {srv.name}</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
+                      {srv.duration_minutes ? `${srv.duration_minutes} min` : ''} {srv.price ? `(€${parseFloat(srv.price).toFixed(2)})` : ''}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <span style={{ fontStyle: 'italic', color: 'var(--text-muted)' }}>Nessun dettaglio servizio disponibile</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {!isAdmin && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px', paddingTop: '8px', borderTop: '1px solid var(--border-color)', gap: '8px', flexWrap: 'wrap' }}>
+            {isPast ? (
+              <span style={{ fontSize: '11px', color: '#4ade80', backgroundColor: 'rgba(34, 197, 94, 0.15)', padding: '4px 10px', borderRadius: '6px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                ✅ Completato
+              </span>
+            ) : (
+              <>
+                <div style={{ flex: 1, minWidth: '140px' }}>
+                  {reason && (
+                    <span style={{ fontSize: '11px', color: '#fca5a5', backgroundColor: 'rgba(239, 68, 68, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'inline-block' }}>
+                      ⚠ {reason}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
+                  {onEditAppointment && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onEditAppointment(item); }}
+                      disabled={!canModify}
+                      style={{
+                        backgroundColor: canModify ? 'var(--accent-color)' : '#334155',
+                        color: canModify ? '#0f1115' : 'var(--text-muted)',
+                        border: 'none',
+                        borderRadius: '6px',
+                        padding: '6px 12px',
+                        fontSize: '11px',
+                        cursor: canModify ? 'pointer' : 'not-allowed',
+                        fontWeight: 600
+                      }}
+                    >
+                      ✏️ Modifica
+                    </button>
+                  )}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleCancelAppointment(item); }}
+                    disabled={!canCancel}
+                    style={{
+                      backgroundColor: canCancel ? '#ef4444' : '#334155',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '6px 12px',
+                      fontSize: '11px',
+                      cursor: canCancel ? 'pointer' : 'not-allowed',
+                      fontWeight: 600
+                    }}
+                  >
+                    Annulla
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div style={{
       position: 'relative',
       zIndex: 1,
-      '--primary-color': salonSettings.primary_color || '#2563eb',
-      '--accent-color': salonSettings.accent_color || '#D4AF37',
-      '--secondary-color': salonSettings.secondary_color || '#1E293B',
+      '--accent-color': '#C5A059',
+      '--text-main': '#f3f4f6',
+      '--text-muted': '#9ca3af',
+      '--border-color': '#2a3241',
       fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
       paddingBottom: '80px',
-      padding: '4px'
+      padding: '4px',
+      color: 'var(--text-main)'
     }}>
       <div style={{ marginBottom: '16px' }}>
-        <h3 style={{ margin: 0, color: 'var(--secondary-color)', fontSize: '1.2rem', fontWeight: 700 }}>
-          {isAdmin ? 'Agenda Salone Centralizzata' : 'Le Tue Prenotazioni'}
+        <h3 style={{ margin: 0, color: 'var(--text-main)', fontSize: '1.2rem', fontWeight: 700 }}>
+          {isAdmin ? 'Agenda Salone Centralizzata' : 'I Miei Appuntamenti'}
         </h3>
-        <p style={{ margin: '2px 0 0 0', color: '#64748b', fontSize: '12px' }}>
-          {isAdmin ? 'Visualizzazione a griglia stile Teams: controlla i buchi e gestisci la giornata' : 'Storico e gestione dei tuoi appuntamenti'}
+        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)', fontSize: '12px' }}>
+          {isAdmin ? 'Controlla la tua giornata (clicca su una card per i dettagli)' : 'Storico e gestione dei tuoi appuntamenti'}
         </p>
       </div>
 
       {isShopClosedToday && (
         <div style={{
-          backgroundColor: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '10px',
+          backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', borderRadius: '10px',
           padding: '12px 16px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px'
         }}>
-          <span style={{ fontSize: '20px' }}>🏖️</span>
+          <span style={{ fontSize: '20px' }}>🏖</span>
           <div style={{ flex: 1 }}>
-            <h4 style={{ margin: '0 0 2px 0', color: '#991b1b', fontSize: '13px', fontWeight: 700 }}>
+            <h4 style={{ margin: '0 0 2px 0', color: '#fca5a5', fontSize: '13px', fontWeight: 700 }}>
               Salone Chiuso in questa data
             </h4>
-            <p style={{ margin: 0, fontSize: '12px', color: '#7f1d1d' }}>
+            <p style={{ margin: 0, fontSize: '12px', color: '#f87171' }}>
               Motivo: <strong>{shopClosureReason}</strong>.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {!isAdmin && imminentClientAppointment && (
-        <div style={{
-          backgroundColor: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '10px',
-          padding: '12px 16px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px'
-        }}>
-          <span style={{ fontSize: '20px' }}>⏰</span>
-          <div style={{ flex: 1 }}>
-            <h4 style={{ margin: '0 0 2px 0', color: '#b45309', fontSize: '13px', fontWeight: 700 }}>
-              Promemoria Appuntamento Imminente
-            </h4>
-            <p style={{ margin: 0, fontSize: '12px', color: '#475569' }}>
-              Hai un appuntamento oggi alle ore <strong style={{ color: 'var(--primary-color)' }}>{imminentClientAppointment.start_time?.slice(0, 5)}</strong> con <strong style={{ color: 'var(--secondary-color)' }}>{imminentClientAppointment.barbers?.name || 'il salone'}</strong>.
             </p>
           </div>
         </div>
@@ -363,10 +712,10 @@ export function AppointmentsView({
       {isAdmin && (
         <div style={{ 
           display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap',
-          backgroundColor: '#ffffff', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0'
+          backgroundColor: '#181c24', padding: '14px', borderRadius: '10px', border: '1px solid var(--border-color)'
         }}>
           <div style={{ flex: '1 1 180px', minWidth: '160px' }}>
-            <label style={{ fontSize: '11px', color: '#475569', display: 'block', marginBottom: '4px', fontWeight: 600 }}>
+            <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px', fontWeight: 600 }}>
               Data Agenda:
             </label>
             <input
@@ -378,7 +727,7 @@ export function AppointmentsView({
           </div>
 
           <div style={{ flex: '1 1 180px', minWidth: '160px' }}>
-            <label style={{ fontSize: '11px', color: '#475569', display: 'block', marginBottom: '4px', fontWeight: 600 }}>
+            <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px', fontWeight: 600 }}>
               Operatore:
             </label>
             <select
@@ -398,91 +747,110 @@ export function AppointmentsView({
       )}
 
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '24px', color: '#64748b', fontSize: '12px' }}>Caricamento prenotazioni...</div>
+        <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)', fontSize: '12px' }}>Caricamento prenotazioni...</div>
       ) : errorMsg ? (
-        <div style={{ padding: '12px', backgroundColor: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '8px', color: '#b91c1c', fontSize: '12px' }}>
+        <div style={{ padding: '12px', backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', borderRadius: '8px', color: '#fca5a5', fontSize: '12px' }}>
           Errore: {errorMsg}
         </div>
-      ) : appointments.length === 0 && !isAdmin && !isShopClosedToday ? (
-        <div style={{ textAlign: 'center', padding: '24px', backgroundColor: '#f8fafc', borderRadius: '10px', border: '1px dashed #cbd5e1', color: '#64748b', fontSize: '12px' }}>
-          Nessuna prenotazione attiva.
-        </div>
       ) : isAdmin ? (
-        /* VISTA A GRIGLIA CON SLOT OSCURATI PER FERIE / ASSENZE */
         <div style={{ 
-          width: '100%', 
-          overflowX: 'auto', 
-          backgroundColor: '#ffffff', 
+          width: '100vw', 
+          maxWidth: '100%',
+          maxHeight: '70vh',
+          overflow: 'auto', 
+          backgroundColor: '#181c24', 
           borderRadius: '12px', 
-          border: '1px solid #e2e8f0',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+          border: '1px solid var(--border-color)',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
         }}>
           <div style={{ 
             display: 'grid', 
-            gridTemplateColumns: `80px repeat(${Math.max(gridBarbers.length, 1)}, minmax(200px, 1fr))`,
-            minWidth: `${80 + Math.max(gridBarbers.length, 1) * 200}px` 
+            gridTemplateColumns: `80px repeat(${Math.max(gridBarbers.length, 1)}, minmax(220px, 1fr))`,
+            minWidth: `${80 + Math.max(gridBarbers.length, 1) * 220}px` 
           }}>
-            {/* Intestazione Tabella */}
             <div style={{ 
-              padding: '12px 8px', backgroundColor: '#f8fafc', borderBottom: '2px solid #cbd5e1', 
-              borderRight: '1px solid #e2e8f0', fontWeight: 700, fontSize: '11px', color: '#64748b', textAlign: 'center' 
+              position: 'sticky', 
+              top: 0,
+              left: 0, 
+              zIndex: 40, 
+              padding: '12px 8px', 
+              backgroundColor: '#11141b', 
+              borderBottom: '2px solid var(--border-color)', 
+              borderRight: '1px solid var(--border-color)', 
+              fontWeight: 700, 
+              fontSize: '11px', 
+              color: 'var(--text-muted)', 
+              textAlign: 'center' 
             }}>
               ORARIO
             </div>
+
             {gridBarbers.map(b => (
               <div key={b.id} style={{ 
-                padding: '12px 8px', backgroundColor: '#f8fafc', borderBottom: '2px solid #cbd5e1', 
-                borderRight: '1px solid #e2e8f0', fontWeight: 700, fontSize: '0.9rem', color: 'var(--secondary-color)', textAlign: 'center' 
+                position: 'sticky',
+                top: 0,
+                zIndex: 30,
+                padding: '12px 8px', 
+                backgroundColor: '#11141b', 
+                borderBottom: '2px solid var(--border-color)', 
+                borderRight: '1px solid var(--border-color)', 
+                fontWeight: 700, 
+                fontSize: '0.9rem', 
+                color: 'var(--accent-color)', 
+                textAlign: 'center'
               }}>
                 👤 {b.name}
               </div>
             ))}
 
-            {/* Righe Orarie */}
-            {timeSlots.map(timeSlot => {
+            {timeSlots.map((timeSlot) => {
+              const slotHeightPx = 55
               return (
                 <React.Fragment key={timeSlot}>
-                  {/* Colonna Orario */}
                   <div style={{ 
-                    padding: '10px 4px', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #e2e8f0',
-                    fontSize: '11px', fontWeight: 600, color: '#64748b', textAlign: 'center', backgroundColor: '#fafafa',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                    position: 'sticky', 
+                    left: 0, 
+                    zIndex: 20, 
+                    padding: '10px 4px', 
+                    borderBottom: '1px solid var(--border-color)', 
+                    borderRight: '1px solid var(--border-color)', 
+                    fontSize: '11px', 
+                    fontWeight: 600, 
+                    color: 'var(--text-muted)', 
+                    textAlign: 'center', 
+                    backgroundColor: '#11141b', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    height: `${slotHeightPx}px`, 
+                    boxSizing: 'border-box'
                   }}>
                     {timeSlot}
                   </div>
 
-                  {/* Colonne Operatori per questo slot */}
                   {gridBarbers.map(b => {
                     const slotStatus = getBarberSlotStatus(b.id, timeSlot)
-                    const matchingApps = appointments.filter(item => 
-                      item.barber_id === b.id && item.start_time && item.start_time.slice(0, 5) === timeSlot
-                    )
-
                     return (
                       <div key={b.id} style={{ 
-                        padding: '6px', borderBottom: '1px solid #f1f5f9', borderRight: '1px solid #e2e8f0',
-                        minHeight: '55px', 
-                        backgroundColor: slotStatus.isBlocked ? '#f1f5f9' : '#ffffff',
-                        display: 'flex', flexDirection: 'column', gap: '4px'
+                        height: `${slotHeightPx}px`,
+                        padding: '4px', 
+                        borderBottom: '1px solid var(--border-color)', 
+                        borderRight: '1px solid var(--border-color)',
+                        backgroundColor: slotStatus.isBlocked ? '#11141b' : '#181c24',
+                        boxSizing: 'border-box',
+                        position: 'relative'
                       }}>
-                        {slotStatus.isBlocked ? (
+                        {slotStatus.isBlocked && (
                           <div style={{
-                            flex: 1, backgroundColor: '#e2e8f0', borderRadius: '6px', padding: '6px',
+                            width: '100%', height: '100%', backgroundColor: '#11141b', borderRadius: '4px',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            backgroundImage: 'repeating-linear-gradient(45deg, #cbd5e1 0, #cbd5e1 2px, transparent 0, transparent 8px)',
-                            opacity: 0.75, textAlign: 'center'
+                            backgroundImage: 'repeating-linear-gradient(45deg, #2a3241 0, #2a3241 2px, transparent 0, transparent 8px)',
+                            opacity: 0.75
                           }}>
-                            <span style={{ fontSize: '10px', fontWeight: 700, color: '#475569', backgroundColor: 'rgba(255,255,255,0.85)', padding: '2px 4px', borderRadius: '4px' }}>
+                            <span style={{ fontSize: '9px', fontWeight: 700, color: 'var(--text-muted)', backgroundColor: 'rgba(17, 20, 27, 0.85)', padding: '1px 4px', borderRadius: '3px' }}>
                               🔒 {slotStatus.reason}
                             </span>
                           </div>
-                        ) : matchingApps.length > 0 ? (
-                          matchingApps.map(item => renderAppointmentCardCompact(item))
-                        ) : (
-                          <div style={{ 
-                            flex: 1, border: '1px dashed #e2e8f0', borderRadius: '6px', backgroundColor: '#f8fafc',
-                            opacity: 0.4, minHeight: '35px'
-                          }} />
                         )}
                       </div>
                     )
@@ -491,227 +859,177 @@ export function AppointmentsView({
               )
             })}
           </div>
+
+          <div style={{ position: 'relative', marginTop: `-${timeSlots.length * 55}px`, pointerEvents: 'none' }}>
+            <div style={{ 
+              display: 'grid', 
+              gridTemplateColumns: `80px repeat(${Math.max(gridBarbers.length, 1)}, minmax(220px, 1fr))`,
+              minWidth: `${80 + Math.max(gridBarbers.length, 1) * 220}px` 
+            }}>
+              <div />
+
+              {gridBarbers.map(b => {
+                const barberApps = appointments.filter(item => item.barber_id === b.id)
+                return (
+                  <div key={b.id} style={{ position: 'relative', height: `${timeSlots.length * 55}px`, pointerEvents: 'auto', paddingTop: '2px' }}>
+                    {barberApps.map(item => renderAppointmentCardCompact(item))}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
         </div>
       ) : (
-        /* Vista standard a lista per i clienti */
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {appointments.map((item) => renderAppointmentCard(item))}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div>
+            <h4 style={{ margin: '0 0 10px 0', fontSize: '1rem', color: 'var(--text-main)', fontWeight: '700' }}>
+              📌 Prossimi Appuntamenti
+            </h4>
+            {appointments.filter(item => `${item.appointment_date}T${item.start_time}` >= new Date().toISOString().slice(0, 16)).length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {appointments
+                  .filter(item => `${item.appointment_date}T${item.start_time}` >= new Date().toISOString().slice(0, 16))
+                  .map((item) => renderAppointmentCard(item))}
+              </div>
+            ) : (
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>Nessun appuntamento futuro in programma.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {selectedAppointmentDetail && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.75)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '16px'
+        }} onClick={() => setSelectedAppointmentDetail(null)}>
+          <div 
+            style={{
+              backgroundColor: '#181c24',
+              border: '1px solid var(--border-color)',
+              borderRadius: '14px',
+              width: '100%',
+              maxWidth: '450px',
+              padding: '24px',
+              boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '16px',
+              position: 'relative'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+              <h4 style={{ margin: 0, color: 'var(--accent-color)', fontSize: '1.1rem', fontWeight: 700 }}>
+                Dettagli Appuntamento
+              </h4>
+              <button 
+                onClick={() => setSelectedAppointmentDetail(null)}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '18px', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '14px' }}>
+              <div>
+                <span style={{ color: 'var(--text-muted)', fontSize: '12px', display: 'block' }}>Cliente:</span>
+                <strong style={{ color: 'var(--text-main)', fontSize: '16px' }}>
+                  {selectedAppointmentDetail.custom_client_name || selectedAppointmentDetail.offline_clients?.full_name || selectedAppointmentDetail.profiles?.full_name || 'N/D'}
+                </strong>
+              </div>
+
+              <div>
+                <span style={{ color: 'var(--text-muted)', fontSize: '12px', display: 'block' }}>Telefono / Contatto:</span>
+                <span style={{ color: 'var(--text-main)' }}>
+                  {selectedAppointmentDetail.offline_clients?.phone || selectedAppointmentDetail.profiles?.phone || 'Non specificato'}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '20px' }}>
+                <div>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '12px', display: 'block' }}>Data:</span>
+                  <span style={{ color: 'var(--text-main)' }}>{formatDate(selectedAppointmentDetail.appointment_date)}</span>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '12px', display: 'block' }}>Orario:</span>
+                  <span style={{ color: 'var(--text-main)' }}>{selectedAppointmentDetail.start_time?.slice(0, 5)} - {selectedAppointmentDetail.end_time?.slice(0, 5)}</span>
+                </div>
+              </div>
+
+              <div>
+                <span style={{ color: 'var(--text-muted)', fontSize: '12px', display: 'block' }}>Operatore Assegnato:</span>
+                <span style={{ color: 'var(--text-main)' }}>{selectedAppointmentDetail.barbers?.name || 'N/D'}</span>
+              </div>
+
+              <div>
+                <span style={{ color: 'var(--text-muted)', fontSize: '12px', display: 'block', marginBottom: '4px' }}>Servizi Richiesti:</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {selectedAppointmentDetail.appointment_services?.map((as, idx) => (
+                    <div key={idx} style={{ backgroundColor: '#11141b', padding: '8px', borderRadius: '6px', border: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: 500 }}>{as.services?.name}</span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{as.services?.duration_minutes} min - €{parseFloat(as.services?.price || 0).toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', paddingTop: '10px', borderTop: '1px solid var(--border-color)' }}>
+                <span style={{ fontWeight: 600 }}>Totale Complessivo:</span>
+                <span style={{ color: 'var(--accent-color)', fontSize: '1.2rem', fontWeight: 800 }}>
+                  €{parseFloat(selectedAppointmentDetail.total_price || 0).toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+              {isAdmin && (
+                <button
+                  onClick={() => sendWhatsAppReminder(selectedAppointmentDetail)}
+                  style={{ flex: 1, backgroundColor: '#22c55e', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px', fontSize: '13px', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  💬 WhatsApp
+                </button>
+              )}
+              {isAdmin && onEditAppointment && (
+                <button
+                  onClick={() => {
+                    const item = selectedAppointmentDetail
+                    setSelectedAppointmentDetail(null)
+                    onEditAppointment(item)
+                  }}
+                  style={{ flex: 1, backgroundColor: 'var(--accent-color)', color: '#0f1115', border: 'none', borderRadius: '8px', padding: '10px', fontSize: '13px', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  ✏️ Modifica
+                </button>
+              )}
+              <button
+                onClick={() => handleCancelAppointment(selectedAppointmentDetail)}
+                style={{ flex: isAdmin ? 'initial' : 1, backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', cursor: 'pointer', fontWeight: 600 }}
+              >
+                Annulla
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
   )
-
-  // Card compatta ottimizzata specificamente per la griglia a matrice
-  function renderAppointmentCardCompact(item) {
-    const formattedTime = item.start_time ? item.start_time.slice(0, 5) : ''
-    const { canModify, canCancel, reason } = checkAppointmentPermissions(item.appointment_date, item.start_time)
-    
-    const sortedServices = item.appointment_services
-      ?.map((as) => as.services)
-      .filter(Boolean)
-      .sort((a, b) => (b.duration_minutes || 0) - (a.duration_minutes || 0)) || []
-
-    const mainService = sortedServices[0]?.name || 'Servizio'
-
-    let clientName = 'Cliente'
-    let clientPhone = ''
-    if (item.custom_client_name) {
-      clientName = item.custom_client_name
-    } else if (item.offline_clients?.full_name) {
-      clientName = item.offline_clients.full_name
-      if (item.offline_clients.phone) clientPhone = item.offline_clients.phone
-    } else if (item.profiles?.full_name) {
-      clientName = item.profiles.full_name
-      if (item.profiles?.phone) clientPhone = item.profiles.phone
-    }
-
-    return (
-      <div
-        key={item.id}
-        style={{
-          backgroundColor: '#eff6ff',
-          borderRadius: '6px',
-          padding: '8px',
-          border: '1px solid #bfdbfe',
-          borderLeft: '3px solid var(--primary-color)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '4px',
-          boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--secondary-color)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {clientName}
-          </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <span style={{ color: 'var(--primary-color)', fontWeight: 800, fontSize: '0.85rem', flexShrink: 0 }}>
-              {item.total_price ? `€${parseFloat(item.total_price).toFixed(2)}` : ''}
-            </span>
-            {isAdmin && clientPhone && (
-              <button
-                onClick={() => sendWhatsAppReminder(item)}
-                title="Invia WhatsApp"
-                style={{
-                  backgroundColor: '#22c55e', border: 'none', color: '#FFF',
-                  padding: '2px 4px', borderRadius: '3px', fontSize: '9px', fontWeight: 600, cursor: 'pointer'
-                }}
-              >
-                💬
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div style={{ fontSize: '11px', color: '#475569', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          <strong>{formattedTime}</strong> - {mainService}
-        </div>
-
-        <div style={{ display: 'flex', gap: '4px', paddingTop: '4px', borderTop: '1px solid #dbeafe', justifyContent: 'flex-end' }}>
-          <button
-            disabled={!canModify}
-            onClick={() => onEditAppointment(item)}
-            title={!canModify ? reason : ''}
-            style={{
-              padding: '2px 6px', backgroundColor: 'var(--primary-color)', color: '#FFF', 
-              border: 'none', borderRadius: '4px', fontSize: '10px', fontWeight: 600, cursor: 'pointer'
-            }}
-          >
-            ✏️ Mod.
-          </button>
-          <button
-            disabled={!canCancel}
-            onClick={() => handleCancelAppointment(item)}
-            title={!canCancel ? reason : ''}
-            style={{
-              padding: '2px 6px', backgroundColor: 'transparent', color: '#dc2626', 
-              border: '1px solid #fca5a5', borderRadius: '4px', fontSize: '10px', fontWeight: 600, cursor: 'pointer'
-            }}
-          >
-            ❌
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  // Card standard usata nella vista a lista singola (per clienti)
-  function renderAppointmentCard(item) {
-    const formattedTime = item.start_time ? item.start_time.slice(0, 5) : ''
-    const { canModify, canCancel, reason } = checkAppointmentPermissions(item.appointment_date, item.start_time)
-    
-    const now = new Date()
-    const appointmentDateTime = new Date(`${item.appointment_date}T${item.start_time || '00:00:00'}`)
-    const isPast = appointmentDateTime <= now
-
-    const sortedServices = item.appointment_services
-      ?.map((as) => as.services)
-      .filter(Boolean)
-      .sort((a, b) => (b.duration_minutes || 0) - (a.duration_minutes || 0)) || []
-
-    const mainService = sortedServices[0]?.name || 'Servizio Generico'
-    const secondaryServices = sortedServices.slice(1).map(s => s.name).join(', ')
-
-    let clientName = 'Cliente'
-    let clientPhone = ''
-
-    if (item.custom_client_name) {
-      clientName = item.custom_client_name
-    } else if (item.offline_clients?.full_name) {
-      clientName = item.offline_clients.full_name
-      if (item.offline_clients.phone) clientPhone = item.offline_clients.phone
-    } else if (item.profiles?.full_name) {
-      clientName = item.profiles.full_name
-      if (item.profiles?.phone) clientPhone = item.profiles.phone
-    }
-
-    return (
-      <div
-        key={item.id}
-        style={{
-          backgroundColor: '#ffffff',
-          borderRadius: '8px',
-          padding: '10px 14px',
-          border: '1px solid #e2e8f0',
-          borderLeft: '4px solid var(--primary-color)',
-          boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
-          opacity: isPast && !isAdmin ? 0.75 : 1,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '6px'
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', flex: 1, minWidth: 0 }}>
-            <span style={{ 
-              backgroundColor: '#eff6ff', color: 'var(--primary-color)', padding: '2px 6px', 
-              borderRadius: '6px', fontWeight: 800, fontSize: '0.85rem', flexShrink: 0 
-            }}>
-              {formattedTime}
-            </span>
-            <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--secondary-color)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>
-              {clientName}
-            </span>
-            {clientPhone && <span style={{ fontSize: '11px', color: '#64748b', flexShrink: '0' }}>({clientPhone})</span>}
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-            <span style={{ color: 'var(--primary-color)', fontWeight: 800, fontSize: '0.95rem' }}>
-              {item.total_price ? `€${parseFloat(item.total_price).toFixed(2)}` : ''}
-            </span>
-          </div>
-        </div>
-
-        <div style={{ fontSize: '12px', color: '#475569', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
-          <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>
-            <strong style={{ color: '#1e293b' }}>{mainService}</strong> 
-            {secondaryServices && <span style={{ color: '#64748b' }}> (+ {secondaryServices})</span>}
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: '6px', paddingTop: '6px', borderTop: '1px solid #f8fafc', justifyContent: 'flex-end' }}>
-          <button
-            disabled={!canModify}
-            onClick={() => onEditAppointment(item)}
-            title={!canModify ? reason : ''}
-            style={{
-              padding: '4px 10px',
-              backgroundColor: !canModify ? '#cbd5e1' : 'var(--primary-color)',
-              color: '#FFF', border: 'none', borderRadius: '6px', fontSize: '11px', fontWeight: 600,
-              cursor: !canModify ? 'not-allowed' : 'pointer'
-            }}
-          >
-            ✏️ Modifica
-          </button>
-
-          <button
-            disabled={!canCancel}
-            onClick={() => handleCancelAppointment(item)}
-            title={!canCancel ? reason : ''}
-            style={{
-              padding: '4px 10px',
-              backgroundColor: 'transparent',
-              color: !canCancel ? '#94a3b8' : '#dc2626',
-              border: !canCancel ? '1px solid #cbd5e1' : '1px solid #fca5a5',
-              borderRadius: '6px', fontSize: '11px', fontWeight: 600,
-              cursor: !canCancel ? 'not-allowed' : 'pointer'
-            }}
-          >
-            ❌ Annulla
-          </button>
-        </div>
-      </div>
-    )
-  }
 }
 
 const filterInputStyle = {
   width: '100%',
   padding: '8px 12px',
   borderRadius: '8px',
-  border: '1px solid #cbd5e1',
-  backgroundColor: '#f8fafc',
-  color: '#1e293b',
+  border: '1px solid var(--border-color)',
+  backgroundColor: '#11141b',
+  color: 'var(--text-main)',
   boxSizing: 'border-box',
   outline: 'none',
   fontSize: '12px'

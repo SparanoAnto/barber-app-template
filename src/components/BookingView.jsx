@@ -9,7 +9,7 @@ const getCategoryIcon = (categoryName) => {
   const name = (categoryName || '').toLowerCase()
   if (name.includes('capelli') || name.includes('taglio')) return '✂️'
   if (name.includes('barba')) return '🧔'
-  if (name.includes('prodotto') || name.includes('rivendita')) return '🛍️'
+  if (name.includes('prodotto') || name.includes('rivendita')) return '🛍'
   if (name.includes('estetica') || name.includes('viso') || name.includes('trattamenti')) return '✨'
   if (name.includes('colore') || name.includes('tintura')) return '🎨'
   return '📌'
@@ -39,6 +39,8 @@ export function BookingView({
   const [activeBarbers, setActiveBarbers] = useState([]) 
   const [loadingBarbers, setLoadingBarbers] = useState(true) 
   const [barberWorkingDays, setBarberWorkingDays] = useState([])
+  const [salonWeeklyHours, setSalonWeeklyHours] = useState([])
+  const [salonExceptions, setSalonExceptions] = useState([]) 
   const [selectedBarber, setSelectedBarber] = useState(null)
   const [selectedTime, setSelectedTime] = useState('')
   
@@ -47,6 +49,8 @@ export function BookingView({
   const [selectedClientType, setSelectedClientType] = useState('offline') 
   const [selectedClientId, setSelectedClientId] = useState('') 
   const [newClientName, setNewClientName] = useState('') 
+  
+  const [newClientPrefix, setNewClientPrefix] = useState('+39')
   const [newClientPhone, setNewClientPhone] = useState('') 
 
   const [existingAppointments, setExistingAppointments] = useState([])
@@ -55,10 +59,12 @@ export function BookingView({
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [dateError, setDateError] = useState('')
   const [holidayNotice, setHolidayNotice] = useState('')
+  const [scheduleNotice, setScheduleNotice] = useState('') 
+
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const todayString = useMemo(() => new Date().toLocaleDateString('sv-SE'), [])
 
-  // Ricerca mirata di TUTTI i servizi di tipo Extra Time presenti nel database
   const extraServicesList = useMemo(() => {
     return services.filter(s => {
       const name = s.name ? s.name.toLowerCase() : ''
@@ -77,6 +83,11 @@ export function BookingView({
   const fetchBarberExceptions = useCallback(async () => {
     const { data } = await supabase.from('barber_exceptions').select('*')
     if (data) setBarberExceptions(data)
+  }, [])
+
+  const fetchSalonExceptions = useCallback(async () => {
+    const { data } = await supabase.from('salon_exceptions').select('*')
+    if (data) setSalonExceptions(data)
   }, [])
 
   const fetchActiveBarbers = useCallback(async () => {
@@ -102,33 +113,58 @@ export function BookingView({
     if (data) setBarberWorkingDays(data)
   }, [])
 
+  const fetchSalonWeeklyHours = useCallback(async () => {
+    const { data } = await supabase.from('salon_weekly_hours').select('*')
+    if (data) setSalonWeeklyHours(data)
+  }, [])
+
   const fetchOfflineClients = useCallback(async () => {
-    const { data } = await supabase.from('offline_clients').select('*').order('full_name', { ascending: true })
+    const { data } = await supabase
+      .from('offline_clients')
+      .select('*')
+      .eq('is_active', true)
+      .order('full_name', { ascending: true })
     if (data) setOfflineClients(data)
   }, [])
 
   const fetchAppUsers = useCallback(async () => {
-    const { data } = await supabase.from('profiles').select('id, full_name, email').order('full_name', { ascending: true })
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, full_name, email')
+      .eq('is_active', true)
+      .order('full_name', { ascending: true })
     if (data) setAppUsers(data)
   }, [])
 
+  // 👉 Ottimizzazione con Promise.all per il caricamento iniziale parallelo
   useEffect(() => {
-    fetchShopClosures()
-    fetchBarberExceptions()
-    fetchActiveBarbers()
-    fetchBarberWorkingDays()
-    if (isAdmin) {
-      fetchOfflineClients()
-      fetchAppUsers()
+    const loadInitialData = async () => {
+      setLoadingBarbers(true)
+      await Promise.all([
+        fetchShopClosures(),
+        fetchBarberExceptions(),
+        fetchSalonExceptions(),
+        fetchActiveBarbers(),
+        fetchBarberWorkingDays(),
+        fetchSalonWeeklyHours(),
+        isAdmin ? fetchOfflineClients() : Promise.resolve(),
+        isAdmin ? fetchAppUsers() : Promise.resolve(),
+      ])
+      setLoadingBarbers(false)
     }
+
+    loadInitialData()
 
     const channel = supabase
       .channel('public-booking-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'barbers' }, () => fetchActiveBarbers())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'barber_exceptions' }, () => fetchBarberExceptions())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'salon_exceptions' }, () => fetchSalonExceptions()) 
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shop_closures' }, () => fetchShopClosures())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'barber_working_days' }, () => fetchBarberWorkingDays())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'salon_weekly_hours' }, () => fetchSalonWeeklyHours())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'offline_clients' }, () => fetchOfflineClients())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchAppUsers())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'services' }, () => {
         if (onServicesChange) onServicesChange()
       })
@@ -137,7 +173,7 @@ export function BookingView({
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [isAdmin, fetchShopClosures, fetchBarberExceptions, fetchActiveBarbers, fetchBarberWorkingDays, fetchOfflineClients, fetchAppUsers, onServicesChange])
+  }, [isAdmin, fetchShopClosures, fetchBarberExceptions, fetchSalonExceptions, fetchActiveBarbers, fetchBarberWorkingDays, fetchSalonWeeklyHours, fetchOfflineClients, fetchAppUsers, onServicesChange])
 
   useEffect(() => {
     if (preselectedClient && isAdmin) {
@@ -155,9 +191,19 @@ export function BookingView({
 
   const isClosedDay = useCallback((dateStr) => {
     if (!dateStr) return false
+    const exception = salonExceptions.find(exc => dateStr >= exc.start_date && dateStr <= exc.end_date)
+    if (exception) {
+      if (exception.is_closed) return true
+      if (exception.opening_time || exception.closing_time) return false 
+    }
+
     const day = new Date(dateStr + 'T00:00:00').getDay()
+    const salonDay = salonWeeklyHours.find(w => w.day_of_week === day)
+    if (salonDay) {
+      return salonDay.is_closed
+    }
     return closedDays.includes(day)
-  }, [closedDays])
+  }, [salonExceptions, salonWeeklyHours, closedDays])
 
   const isHolidayDate = useCallback((dateStr) => {
     if (!dateStr) return false
@@ -167,6 +213,7 @@ export function BookingView({
   const handleDateChange = useCallback((dateVal) => {
     setDateError('')
     setHolidayNotice('')
+    setScheduleNotice('') 
     setSelectedTime('')
     setSelectedBarber(null)
 
@@ -176,7 +223,7 @@ export function BookingView({
     }
 
     if (isClosedDay(dateVal)) {
-      setDateError('⚠️ Il salone è chiuso nel giorno selezionato (giorno di chiusura settimanale).')
+      setDateError('⚠️ Il salone è chiuso nel giorno selezionato.')
       setSelectedDate('')
       return
     }
@@ -190,10 +237,17 @@ export function BookingView({
 
     setSelectedDate(dateVal)
 
+    const salonException = salonExceptions.find(exc => dateVal >= exc.start_date && dateVal <= exc.end_date)
+    if (salonException && !salonException.is_closed && (salonException.opening_time || salonException.closing_time)) {
+      const customOpen = salonException.opening_time ? salonException.opening_time.slice(0, 5) : openingTime
+      const customClose = salonException.closing_time ? salonException.closing_time.slice(0, 5) : closingTime
+      setScheduleNotice(`⏰ Nota: In questa giornata è in vigore un orario speciale/prolungato: ${customOpen} - ${customClose}`)
+    }
+
     if (isHolidayDate(dateVal)) {
       setHolidayNotice('🎉 Giorno Festivo: Gli orari del salone potrebbero subire variazioni o aperture straordinarie.')
     }
-  }, [isClosedDay, isShopClosedPeriod, isHolidayDate, shopClosures])
+  }, [isClosedDay, isShopClosedPeriod, isHolidayDate, shopClosures, salonExceptions, openingTime, closingTime])
 
   useEffect(() => {
     if (editingAppointment) {
@@ -244,6 +298,7 @@ export function BookingView({
         setSelectedClientType('offline')
         setSelectedClientId(editingAppointment.offline_client_id)
         setNewClientName('')
+        setNewClientPrefix('+39')
         setNewClientPhone('')
       } else if (editingAppointment.user_id && editingAppointment.user_id !== userId) {
         setSelectedClientType('app')
@@ -263,9 +318,11 @@ export function BookingView({
       setSelectedClientType('offline')
       setSelectedClientId('')
       setNewClientName('')
+      setNewClientPrefix('+39')
       setNewClientPhone('')
       setDateError('')
       setHolidayNotice('')
+      setScheduleNotice('')
     }
   }, [editingAppointment, services, activeBarbers, extraServicesList, userId, preselectedClient, handleDateChange])
 
@@ -312,16 +369,39 @@ export function BookingView({
   }, [selectedServices, customServicePrices, isAdmin, adminExtraMinutes, extraServicesList, configuredExtraService])
 
   const generateTimeSlots = useCallback(() => {
-    let targetOpening = openingTime
-    let targetClosing = closingTime
+    if (!selectedDate || !selectedBarber) return []
 
-    if (selectedDate && selectedBarber) {
-      const dayOfWeek = new Date(selectedDate + 'T00:00:00').getDay()
-      const wd = barberWorkingDays.find(w => w.barber_id === selectedBarber.id && w.day_of_week === dayOfWeek)
-      if (wd) {
-        if (wd.start_time) targetOpening = wd.start_time.slice(0, 5)
-        if (wd.end_time) targetClosing = wd.end_time.slice(0, 5)
+    const dayOfWeek = new Date(selectedDate + 'T00:00:00').getDay()
+    let targetOpening = null
+    let targetClosing = null
+
+    const salonException = salonExceptions.find(exc => selectedDate >= exc.start_date && selectedDate <= exc.end_date)
+    if (salonException && !salonException.is_closed) {
+      if (salonException.opening_time) targetOpening = salonException.opening_time.slice(0, 5)
+      if (salonException.closing_time) targetClosing = salonException.closing_time.slice(0, 5)
+    }
+
+    const salonDay = salonWeeklyHours.find(w => w.day_of_week === dayOfWeek)
+    const salonDefaultOpen = salonDay && salonDay.opening_time ? salonDay.opening_time.slice(0, 5) : openingTime
+    const salonDefaultClose = salonDay && salonDay.closing_time ? salonDay.closing_time.slice(0, 5) : closingTime
+
+    if (salonDay && salonDay.is_closed) return []
+
+    const barberDays = barberWorkingDays.filter(wd => wd.barber_id === selectedBarber.id)
+
+    if (barberDays.length > 0) {
+      const specificBarberDay = barberDays.find(wd => wd.day_of_week === dayOfWeek)
+      if (!specificBarberDay) return [] 
+
+      if (!targetOpening) {
+        targetOpening = specificBarberDay.start_time ? specificBarberDay.start_time.slice(0, 5) : salonDefaultOpen
       }
+      if (!targetClosing) {
+        targetClosing = specificBarberDay.end_time ? specificBarberDay.end_time.slice(0, 5) : salonDefaultClose
+      }
+    } else {
+      if (!targetOpening) targetOpening = salonDefaultOpen
+      if (!targetClosing) targetClosing = salonDefaultClose
     }
 
     const slots = []
@@ -340,7 +420,7 @@ export function BookingView({
       current.setMinutes(current.getMinutes() + slotIntervalMinutes)
     }
     return slots
-  }, [selectedDate, selectedBarber, openingTime, closingTime, barberWorkingDays, slotIntervalMinutes])
+  }, [selectedDate, selectedBarber, salonExceptions, barberWorkingDays, salonWeeklyHours, openingTime, closingTime, slotIntervalMinutes])
 
   const allTimeSlots = useMemo(() => generateTimeSlots(), [generateTimeSlots])
 
@@ -350,14 +430,19 @@ export function BookingView({
 
     return activeBarbers.filter(barber => {
       if (barber.termination_date && dateStr > barber.termination_date) return false 
+
       const barberDays = barberWorkingDays.filter(wd => wd.barber_id === barber.id)
       if (barberDays.length > 0) {
         const worksOnThisDay = barberDays.some(wd => wd.day_of_week === dayOfWeek)
         if (!worksOnThisDay) return false
+      } else {
+        const salonDay = salonWeeklyHours.find(w => w.day_of_week === dayOfWeek)
+        if (salonDay && salonDay.is_closed) return false
       }
+
       return true
     })
-  }, [activeBarbers, barberWorkingDays])
+  }, [activeBarbers, barberWorkingDays, salonWeeklyHours])
 
   useEffect(() => {
     const fetchExistingAppointments = async () => {
@@ -416,13 +501,28 @@ export function BookingView({
     const proposedEndMinutes = proposedStartMinutes + effectiveDuration
 
     let targetClosing = closingTime
-    if (selectedBarber) {
-      const dayOfWeek = new Date(selectedDate + 'T00:00:00').getDay()
-      const wd = barberWorkingDays.find(w => w.barber_id === selectedBarber.id && w.day_of_week === dayOfWeek)
-      if (wd && wd.end_time) {
-        targetClosing = wd.end_time.slice(0, 5)
+    const dayOfWeek = new Date(selectedDate + 'T00:00:00').getDay()
+
+    const salonException = salonExceptions.find(exc => selectedDate >= exc.start_date && selectedDate <= exc.end_date)
+    const salonDay = salonWeeklyHours.find(w => w.day_of_week === dayOfWeek)
+    const salonDefaultClose = salonDay && salonDay.closing_time ? salonDay.closing_time.slice(0, 5) : closingTime
+
+    if (salonException && salonException.closing_time) {
+      targetClosing = salonException.closing_time.slice(0, 5)
+    } else if (selectedBarber) {
+      const barberDays = barberWorkingDays.filter(wd => wd.barber_id === selectedBarber.id)
+      if (barberDays.length > 0) {
+        const wd = barberDays.find(w => w.day_of_week === dayOfWeek)
+        if (wd && wd.end_time) {
+          targetClosing = wd.end_time.slice(0, 5)
+        } else {
+          targetClosing = salonDefaultClose
+        }
+      } else {
+        targetClosing = salonDefaultClose
       }
     }
+
     const [closingH, closingM] = targetClosing.split(':').map(Number)
     const closingMinutes = closingH * 60 + closingM
 
@@ -440,13 +540,17 @@ export function BookingView({
       }
     }
     return true
-  }, [selectedDate, todayString, isBarberAvailableAtSlot, totalDuration, slotIntervalMinutes, closingTime, selectedBarber, barberWorkingDays, existingAppointments])
+  }, [selectedDate, todayString, isBarberAvailableAtSlot, totalDuration, slotIntervalMinutes, closingTime, salonExceptions, selectedBarber, barberWorkingDays, salonWeeklyHours, existingAppointments])
 
   async function handleConfirmBooking() {
+    if (isSubmitting) return 
+
     if (!selectedDate || !selectedBarber || !selectedTime || selectedServices.length === 0) {
       alert("Seleziona tutti i campi obbligatori e almeno un servizio.")
       return
     }
+
+    setIsSubmitting(true) 
 
     const [startH, startM] = selectedTime.split(':').map(Number)
     const effectiveDuration = totalDuration === 0 ? slotIntervalMinutes : totalDuration
@@ -480,11 +584,15 @@ export function BookingView({
           if (selectedClientId === 'new') {
             if (!newClientName.trim()) {
               alert("Inserisci il nome del nuovo cliente.")
+              setIsSubmitting(false)
               return
             }
+            
+            const fullPhone = newClientPhone.trim() ? `${newClientPrefix} ${newClientPhone.trim()}` : 'N/D'
+
             const { data: newOff, error: offErr } = await supabase
               .from('offline_clients')
-              .insert([{ full_name: newClientName.trim(), phone: newClientPhone.trim() || 'N/D' }])
+              .insert([{ full_name: newClientName.trim(), phone: fullPhone }])
               .select()
               .single()
 
@@ -497,6 +605,7 @@ export function BookingView({
             finalOfflineClientId = selectedClientId
           } else {
             alert("Seleziona un cliente dalla rubrica o inseriscine uno nuovo.")
+            setIsSubmitting(false)
             return
           }
         }
@@ -585,6 +694,8 @@ export function BookingView({
       if (onBookingSuccess) onBookingSuccess()
     } catch (err) {
       alert("Errore salvataggio: " + err.message)
+    } finally {
+      setIsSubmitting(false) 
     }
   }
 
@@ -592,38 +703,36 @@ export function BookingView({
     <div style={{
       position: 'relative',
       zIndex: 1,
-      '--primary-color': salonSettings.primary_color || '#2563eb',
-      '--accent-color': salonSettings.accent_color || '#D4AF37',
-      '--secondary-color': salonSettings.secondary_color || '#1E293B',
       fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
       paddingBottom: '80px',
-      padding: '4px'
+      padding: '4px',
+      color: 'var(--text-main)'
     }}>
       {editingAppointment && (
         <div style={{ 
-          backgroundColor: '#eff6ff', padding: '14px 18px', borderRadius: '12px', marginBottom: '24px', 
-          border: '1px solid #bfdbfe', display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+          backgroundColor: 'rgba(37, 99, 235, 0.15)', padding: '14px 18px', borderRadius: '12px', marginBottom: '24px', 
+          border: '1px solid var(--accent-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center'
         }}>
-          <span style={{ fontWeight: 700, color: 'var(--primary-color)', fontSize: '0.9rem' }}>
+          <span style={{ fontWeight: 700, color: 'var(--accent-color)', fontSize: '0.9rem' }}>
             ✏️ Modifica dell'appuntamento esistente
           </span>
-          <button onClick={onCancelEdit} style={{ background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '13px', fontWeight: 600, textDecoration: 'underline' }}>
+          <button onClick={onCancelEdit} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '13px', fontWeight: 600, textDecoration: 'underline' }}>
             Annulla Modifica
           </button>
         </div>
       )}
 
       {isAdmin && (
-        <div style={{ marginBottom: '24px', border: '1px solid #e2e8f0', padding: '20px', background: '#ffffff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-          <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--primary-color)', display: 'block', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+        <div className="info-card" style={{ marginBottom: '24px', padding: '20px' }}>
+          <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--accent-color)', display: 'block', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
             👑 Seleziona Cliente per la Prenotazione:
           </label>
           <div style={{ display: 'flex', gap: '20px', marginBottom: '14px' }}>
-            <label style={{ color: '#1e293b', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600 }}>
+            <label style={{ color: 'var(--text-main)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600 }}>
               <input type="radio" name="clientType" checked={selectedClientType === 'offline'} onChange={() => { setSelectedClientType('offline'); setSelectedClientId(''); }} />
               Cliente da Rubrica (Offline)
             </label>
-            <label style={{ color: '#1e293b', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600 }}>
+            <label style={{ color: 'var(--text-main)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600 }}>
               <input type="radio" name="clientType" checked={selectedClientType === 'app'} onChange={() => { setSelectedClientType('app'); setSelectedClientId(''); }} />
               Utente Registrato App
             </label>
@@ -631,7 +740,7 @@ export function BookingView({
 
           {selectedClientType === 'offline' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <select value={selectedClientId} onChange={(e) => setSelectedClientId(e.target.value)} style={{ ...inputStyle, backgroundColor: '#f8fafc', color: '#1e293b', fontWeight: 600 }}>
+              <select value={selectedClientId} onChange={(e) => setSelectedClientId(e.target.value)} style={inputStyle}>
                 <option value="">-- Seleziona un cliente dalla rubrica --</option>
                 <option value="new">➕ Inserisci nuovo cliente occasionale</option>
                 {offlineClients.map(c => (
@@ -639,14 +748,43 @@ export function BookingView({
                 ))}
               </select>
               {selectedClientId === 'new' && (
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', background: '#f8fafc', padding: '14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                  <input type="text" placeholder="Nome e Cognome cliente" value={newClientName} onChange={(e) => setNewClientName(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: '180px', backgroundColor: '#fff' }} />
-                  <input type="text" placeholder="Telefono (Opzionale)" value={newClientPhone} onChange={(e) => setNewClientPhone(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: '180px', backgroundColor: '#fff' }} />
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', background: '#11141b', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                  <input 
+                    type="text" 
+                    placeholder="Nome e Cognome cliente" 
+                    value={newClientName} 
+                    onChange={(e) => setNewClientName(e.target.value)} 
+                    style={{ ...inputStyle, flex: 2, minWidth: '180px' }} 
+                  />
+                  
+                  <div style={{ display: 'flex', gap: '6px', flex: 1.5, minWidth: '200px' }}>
+                    <select 
+                      value={newClientPrefix} 
+                      onChange={(e) => setNewClientPrefix(e.target.value)} 
+                      style={{ ...inputStyle, width: '90px', padding: '12px 6px', textAlign: 'center' }}
+                    >
+                      <option value="+39">+39 (IT)</option>
+                      <option value="+41">+41 (CH)</option>
+                      <option value="+33">+33 (FR)</option>
+                      <option value="+49">+49 (DE)</option>
+                      <option value="+44">+44 (UK)</option>
+                      <option value="+34">+34 (ES)</option>
+                      <option value="+1">+1 (US)</option>
+                    </select>
+                    
+                    <input 
+                      type="tel" 
+                      placeholder="Telefono (Opzionale)" 
+                      value={newClientPhone} 
+                      onChange={(e) => setNewClientPhone(e.target.value)} 
+                      style={{ ...inputStyle, flex: 1 }} 
+                    />
+                  </div>
                 </div>
               )}
             </div>
           ) : (
-            <select value={selectedClientId} onChange={(e) => setSelectedClientId(e.target.value)} style={{ ...inputStyle, backgroundColor: '#f8fafc', color: '#1e293b', fontWeight: 600 }}>
+            <select value={selectedClientId} onChange={(e) => setSelectedClientId(e.target.value)} style={inputStyle}>
               <option value="">-- Seleziona utente registrato --</option>
               {appUsers.map(u => (
                 <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
@@ -656,7 +794,7 @@ export function BookingView({
         </div>
       )}
 
-      <h3 style={{ color: 'var(--secondary-color)', fontSize: '1.05rem', fontWeight: 700, marginBottom: '14px' }}>
+      <h3 className="section-title">
         1. Seleziona Servizi o Prodotti
       </h3>
 
@@ -680,8 +818,8 @@ export function BookingView({
         return sortedCategories.map(([categoryName, catServices]) => (
           <div key={categoryName} style={{ marginBottom: '20px' }}>
             <div style={{ 
-              fontSize: '0.85rem', fontWeight: 700, color: 'var(--primary-color)', marginBottom: '10px', 
-              textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid #e2e8f0', paddingBottom: '6px',
+              fontSize: '0.85rem', fontWeight: 700, color: 'var(--accent-color)', marginBottom: '10px', 
+              textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid var(--border-color)', paddingBottom: '6px',
               display: 'flex', alignItems: 'center', gap: '8px'
             }}>
               <span>{getCategoryIcon(categoryName)}</span> {categoryName}
@@ -696,40 +834,40 @@ export function BookingView({
                 return (
                   <div key={s.id} onClick={() => toggleService(s)} style={{
                     padding: '12px 14px', borderRadius: '10px',
-                    border: isSelected ? '2px solid var(--primary-color)' : '1px solid #e2e8f0',
-                    backgroundColor: isSelected ? '#eff6ff' : '#ffffff',
+                    border: isSelected ? '2px solid var(--accent-color)' : '1px solid var(--border-color)',
+                    backgroundColor: isSelected ? 'rgba(197, 160, 89, 0.1)' : '#181c24',
                     cursor: 'pointer',
                     display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '8px',
-                    boxShadow: isSelected ? '0 4px 10px rgba(37, 99, 235, 0.08)' : '0 1px 2px rgba(0,0,0,0.02)',
+                    boxShadow: isSelected ? '0 4px 10px rgba(0, 0, 0, 0.4)' : '0 1px 2px rgba(0,0,0,0.2)',
                     transition: 'all 0.15s ease'
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-                      <strong style={{ fontSize: '0.88rem', color: 'var(--secondary-color)', lineHeight: '1.2' }}>{s.name}</strong>
-                      <span style={{ color: 'var(--primary-color)', fontWeight: 800, fontSize: '0.95rem', whiteSpace: 'nowrap' }}>
+                      <strong style={{ fontSize: '0.88rem', color: 'var(--text-main)', lineHeight: '1.2' }}>{s.name}</strong>
+                      <span style={{ color: 'var(--accent-color)', fontWeight: 800, fontSize: '0.95rem', whiteSpace: 'nowrap' }}>
                         {!isZeroDuration && `€${parseFloat(s.price).toFixed(2)}`}
                       </span>
                     </div>
 
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#64748b' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--text-muted)' }}>
                       <span>{isZeroDuration && !isDiscountOrIntegration ? '📦 Prodotto' : isZeroDuration ? '' : `⏱ ${s.duration_minutes} min`}</span>
                       <span style={{ 
                         width: '16px', height: '16px', borderRadius: '50%', 
-                        border: isSelected ? '2px solid var(--primary-color)' : '1px solid #cbd5e1',
-                        backgroundColor: isSelected ? 'var(--primary-color)' : 'transparent',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '10px'
+                        border: isSelected ? '2px solid var(--accent-color)' : '1px solid var(--border-color)',
+                        backgroundColor: isSelected ? 'var(--accent-color)' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#0f1115', fontSize: '10px', fontWeight: 700
                       }}>
                         {isSelected ? '✓' : ''}
                       </span>
                     </div>
 
                     {isSelected && isZeroDuration && isAdmin && (
-                      <div onClick={(e) => e.stopPropagation()} style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px', background: '#ffffff', padding: '6px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-                        <span style={{ fontSize: '11px', color: 'var(--primary-color)', fontWeight: 700 }}>€:</span>
+                      <div onClick={(e) => e.stopPropagation()} style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px', background: '#11141b', padding: '6px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                        <span style={{ fontSize: '11px', color: 'var(--accent-color)', fontWeight: 700 }}>€:</span>
                         <input
                           type="number" step="0.05" placeholder="Prezzo"
                           value={customServicePrices[s.id] !== undefined ? customServicePrices[s.id] : s.price}
                           onChange={(e) => handleCustomPriceChange(s.id, e.target.value)}
-                          style={{ ...inputStyle, padding: '4px 8px', fontSize: '12px', backgroundColor: '#f8fafc', color: '#1e293b', fontWeight: 700 }}
+                          style={{ ...inputStyle, padding: '4px 8px', fontSize: '12px' }}
                         />
                       </div>
                     )}
@@ -744,13 +882,13 @@ export function BookingView({
       {selectedServices.length > 0 && (
         <>
           {isAdmin && extraServicesList.length > 0 && (
-            <div style={{ padding: '16px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '12px', marginBottom: '24px' }}>
+            <div className="info-card" style={{ padding: '16px', marginBottom: '24px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
-                  <strong style={{ color: 'var(--primary-color)', fontSize: '0.9rem', display: 'block', marginBottom: '2px' }}>⏱️ Regolazione Durata Extra (Admin)</strong>
-                  <span style={{ fontSize: '12px', color: '#64748b' }}>Aggiunge minuti e costo basati sui servizi di extra time configurati.</span>
+                  <strong style={{ color: 'var(--accent-color)', fontSize: '0.9rem', display: 'block', marginBottom: '2px' }}>⏱️ Regolazione Durata Extra (Admin)</strong>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Aggiunge minuti e costo basati sui servizi di extra time configurati.</span>
                 </div>
-                <select value={adminExtraMinutes} onChange={(e) => setAdminExtraMinutes(Number(e.target.value))} style={{ ...inputStyle, width: '220px', padding: '10px 12px', backgroundColor: '#fff', color: '#1e293b', fontWeight: 700 }}>
+                <select value={adminExtraMinutes} onChange={(e) => setAdminExtraMinutes(Number(e.target.value))} style={{ ...inputStyle, width: '220px', padding: '10px 12px' }}>
                   <option value={0}>Nessun extra (+0 min)</option>
                   {extraServicesList.map(es => (
                     <option key={es.id} value={es.duration_minutes}>
@@ -762,39 +900,40 @@ export function BookingView({
             </div>
           )}
 
-          <div style={{ padding: '14px 18px', background: '#f8fafc', borderLeft: '4px solid var(--primary-color)', borderRadius: '12px', marginBottom: '24px', border: '1px solid #e2e8f0', borderLeftWidth: '4px' }}>
-            <strong style={{ color: 'var(--secondary-color)', fontSize: '0.95rem' }}>
+          <div style={{ padding: '14px 18px', background: '#181c24', borderRadius: '12px', marginBottom: '24px', border: '1px solid var(--border-color)', borderLeft: '4px solid var(--accent-color)' }}>
+            <strong style={{ color: 'var(--text-main)', fontSize: '0.95rem' }}>
               Riepilogo: {totalDuration > 0 ? `${totalDuration} min` : 'Solo Prodotti'} | Totale: €{totalPrice.toFixed(2)}
             </strong>
           </div>
 
-          <h3 style={{ color: 'var(--secondary-color)', fontSize: '1.05rem', fontWeight: 700, marginBottom: '14px' }}>
+          <h3 className="section-title">
             2. Scegli la Data
           </h3>
           <div style={{ marginBottom: '24px' }}>
-            <input type="date" min={todayString} value={selectedDate} onChange={e => handleDateChange(e.target.value)} style={{ ...inputStyle, border: holidayNotice ? '1px solid var(--accent-color)' : dateError ? '1px solid #ef4444' : '1px solid #cbd5e1' }} />
-            {dateError && <div style={{ marginTop: '10px', padding: '12px', background: '#fee2e2', color: '#991b1b', borderRadius: '8px', fontSize: '13px', fontWeight: 600 }}>{dateError}</div>}
-            {holidayNotice && <div style={{ marginTop: '10px', padding: '12px', background: '#fef3c7', color: '#92400e', borderRadius: '8px', fontSize: '13px', fontWeight: 600 }}>{holidayNotice}</div>}
+            <input type="date" min={todayString} value={selectedDate} onChange={e => handleDateChange(e.target.value)} style={{ ...inputStyle, border: holidayNotice || scheduleNotice ? '1px solid var(--accent-color)' : dateError ? '1px solid var(--danger-color)' : '1px solid var(--border-color)' }} />
+            {dateError && <div style={{ marginTop: '10px', padding: '12px', background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', borderRadius: '8px', fontSize: '13px', fontWeight: 600, border: '1px solid var(--danger-color)' }}>{dateError}</div>}
+            {scheduleNotice && <div style={{ marginTop: '10px', padding: '12px', background: 'rgba(197, 160, 89, 0.15)', color: 'var(--accent-color)', borderRadius: '8px', fontSize: '13px', fontWeight: 600, border: '1px solid var(--accent-color)' }}>{scheduleNotice}</div>}
+            {holidayNotice && <div style={{ marginTop: '10px', padding: '12px', background: 'rgba(245, 158, 11, 0.15)', color: '#fcd34d', borderRadius: '8px', fontSize: '13px', fontWeight: 600 }}>{holidayNotice}</div>}
           </div>
 
           {selectedDate && !dateError && (
             <>
-              <h3 style={{ color: 'var(--secondary-color)', fontSize: '1.05rem', fontWeight: 700, marginBottom: '14px' }}>
+              <h3 className="section-title">
                 3. Scegli l'Operatore
               </h3>
               <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap' }}>
                 {loadingBarbers ? (
-                  <p style={{ color: '#64748b', fontSize: '13px' }}>Caricamento operatori...</p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Caricamento operatori...</p>
                 ) : getAvailableBarbersForDate(selectedDate).length === 0 ? (
-                  <p style={{ color: '#64748b', fontSize: '13px' }}>Nessun operatore disponibile in questa data.</p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Nessun operatore disponibile in questa data.</p>
                 ) : (
                   getAvailableBarbersForDate(selectedDate).map(b => (
                     <button key={b.id} onClick={() => setSelectedBarber(b)} style={{
                       flex: 1, minWidth: '140px', padding: '14px', borderRadius: '12px',
-                      border: selectedBarber?.id === b.id ? '2px solid var(--primary-color)' : '1px solid #e2e8f0',
-                      backgroundColor: selectedBarber?.id === b.id ? '#eff6ff' : '#ffffff',
-                      color: 'var(--secondary-color)', cursor: 'pointer', fontWeight: 700, fontSize: '0.95rem',
-                      boxShadow: selectedBarber?.id === b.id ? '0 4px 12px rgba(37, 99, 235, 0.08)' : '0 1px 3px rgba(0,0,0,0.02)'
+                      border: selectedBarber?.id === b.id ? '2px solid var(--accent-color)' : '1px solid var(--border-color)',
+                      backgroundColor: selectedBarber?.id === b.id ? 'rgba(197, 160, 89, 0.1)' : '#181c24',
+                      color: 'var(--text-main)', cursor: 'pointer', fontWeight: 700, fontSize: '0.95rem',
+                      boxShadow: selectedBarber?.id === b.id ? '0 4px 12px rgba(0,0,0,0.4)' : '0 1px 3px rgba(0,0,0,0.2)'
                     }}>
                       👤 {b.name}
                     </button>
@@ -806,10 +945,10 @@ export function BookingView({
 
           {selectedBarber && selectedDate && !dateError && (
             <>
-              <h3 style={{ color: 'var(--secondary-color)', fontSize: '1.05rem', fontWeight: 700, marginBottom: '14px' }}>
+              <h3 className="section-title">
                 4. Seleziona Orario
               </h3>
-              {loadingSlots ? <p style={{ color: '#64748b', fontSize: '13px' }}>Caricamento slot...</p> : (
+              {loadingSlots ? <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Caricamento slot...</p> : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(95px, 1fr))', gap: '10px' }}>
                   {allTimeSlots.map(slot => {
                     const available = isSlotAvailable(slot)
@@ -823,9 +962,9 @@ export function BookingView({
                         style={{
                           padding: '12px 6px',
                           borderRadius: '8px',
-                          border: isSelected ? '2px solid var(--primary-color)' : '1px solid #e2e8f0',
-                          backgroundColor: !available ? '#fee2e2' : isSelected ? 'var(--primary-color)' : '#ffffff',
-                          color: !available ? '#991b1b' : isSelected ? '#ffffff' : 'var(--secondary-color)',
+                          border: isSelected ? '2px solid var(--accent-color)' : '1px solid var(--border-color)',
+                          backgroundColor: !available ? 'rgba(239, 68, 68, 0.15)' : isSelected ? 'var(--accent-color)' : '#181c24',
+                          color: !available ? '#fca5a5' : isSelected ? '#0f1115' : 'var(--text-main)',
                           cursor: !available ? 'not-allowed' : 'pointer',
                           fontWeight: isSelected || !available ? 700 : 500,
                           fontSize: '13px',
@@ -834,7 +973,7 @@ export function BookingView({
                           alignItems: 'center',
                           justifyContent: 'center',
                           gap: '2px',
-                          boxShadow: isSelected ? '0 4px 10px rgba(37, 99, 235, 0.2)' : '0 1px 2px rgba(0,0,0,0.02)'
+                          boxShadow: isSelected ? '0 4px 10px rgba(0,0,0,0.4)' : '0 1px 2px rgba(0,0,0,0.2)'
                         }}
                       >
                         <span>{slot}</span>
@@ -847,12 +986,24 @@ export function BookingView({
                 </div>
               )}
 
-              <button onClick={handleConfirmBooking} disabled={!selectedTime} style={{
-                width: '100%', marginTop: '24px', padding: '14px', borderRadius: '12px', border: 'none',
-                backgroundColor: !selectedTime ? '#cbd5e1' : 'var(--primary-color)', color: '#FFF', fontWeight: 700, fontSize: '0.95rem', cursor: !selectedTime ? 'not-allowed' : 'pointer',
-                boxShadow: !selectedTime ? 'none' : '0 4px 12px rgba(37, 99, 235, 0.2)'
-              }}>
-                {editingAppointment ? "Salva Modifiche" : "Conferma Registrazione"}
+              <button 
+                onClick={handleConfirmBooking} 
+                disabled={!selectedTime || isSubmitting} 
+                style={{
+                  width: '100%', marginTop: '24px', padding: '14px', borderRadius: '12px', border: 'none',
+                  backgroundColor: (!selectedTime || isSubmitting) ? 'var(--border-color)' : 'var(--accent-color)', 
+                  color: (!selectedTime || isSubmitting) ? 'var(--text-muted)' : '#0f1115', 
+                  fontWeight: 700, fontSize: '0.95rem', 
+                  cursor: (!selectedTime || isSubmitting) ? 'not-allowed' : 'pointer',
+                  boxShadow: (!selectedTime || isSubmitting) ? 'none' : '0 4px 12px rgba(0,0,0,0.4)',
+                  opacity: isSubmitting ? 0.7 : 1,
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                {isSubmitting 
+                  ? "⏳ Elaborazione in corso..." 
+                  : (editingAppointment ? "Salva Modifiche" : "Conferma Registrazione")
+                }
               </button>
             </>
           )}
@@ -863,6 +1014,6 @@ export function BookingView({
 }
 
 const inputStyle = { 
-  width: '100%', padding: '12px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', 
-  backgroundColor: '#f8fafc', color: '#1e293b', boxSizing: 'border-box', outline: 'none', fontSize: '13px'
+  width: '100%', padding: '12px 14px', borderRadius: '8px', border: '1px solid var(--border-color)', 
+  backgroundColor: '#0f1115', color: '#f3f4f6', boxSizing: 'border-box', outline: 'none', fontSize: '13px'
 }

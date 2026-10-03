@@ -5,7 +5,7 @@ const getCategoryIcon = (categoryName) => {
   const name = categoryName.toLowerCase()
   if (name.includes('capelli') || name.includes('taglio')) return '✂️'
   if (name.includes('barba')) return '🧔'
-  if (name.includes('prodotto') || name.includes('rivendita')) return '🛍️'
+  if (name.includes('prodotto') || name.includes('rivendita')) return '🛍️️'
   if (name.includes('estetica') || name.includes('viso') || name.includes('trattamenti')) return '✨'
   if (name.includes('colore') || name.includes('tintura')) return '🎨'
   return '📌'
@@ -14,7 +14,7 @@ const getCategoryIcon = (categoryName) => {
 export function AdminServices({ salonSettings = {} }) {
   const [services, setServices] = useState([])
   const [loading, setLoading] = useState(true)
-  const [showInactive, setShowInactive] = useState(false) // Stato per mostrare/nascondere i disattivati
+  const [showInactive, setShowInactive] = useState(false)
 
   const formRef = useRef(null)
 
@@ -67,7 +67,7 @@ export function AdminServices({ salonSettings = {} }) {
       price: parseFloat(price),
       duration_minutes: parseInt(durationMinutes, 10),
       type: type,
-      is_bookable: true // Quando viene creato o modificato, assicuriamo sia attivo
+      is_bookable: true
     }
 
     if (editingId) {
@@ -109,15 +109,12 @@ export function AdminServices({ salonSettings = {} }) {
     }
   }
 
-  // Funzione per attivare/disattivare con controllo sugli appuntamenti futuri
   async function handleToggleStatus(service) {
-    const willBeActive = !service.is_bookable // Se attualmente è false, diventerà true (attivazione)
+    const willBeActive = !service.is_bookable
 
-    // Se stiamo tentando di DISATTIVARE il servizio, controlliamo se ci sono appuntamenti futuri associati
     if (!willBeActive) {
       const todayStr = new Date().toISOString().split('T')[0]
 
-      // Cerchiamo le associazioni in appointment_services collegate ad appuntamenti futuri o odierni
       const { data: futureAppointments, error: checkError } = await supabase
         .from('appointment_services')
         .select(`
@@ -134,7 +131,6 @@ export function AdminServices({ salonSettings = {} }) {
       if (checkError) {
         console.error('Errore controllo appuntamenti:', checkError)
       } else if (futureAppointments && futureAppointments.length > 0) {
-        // Filtriamo per escludere eventuali appuntamenti cancellati se necessario
         const activeFutureAppointments = futureAppointments.filter(
           item => item.appointments && item.appointments.status !== 'cancelled'
         )
@@ -172,8 +168,15 @@ export function AdminServices({ salonSettings = {} }) {
     setType('service')
   }
 
-  // Filtriamo i servizi in base all'interruttore "Mostra disattivati"
-  const filteredServices = services.filter(s => showInactive ? true : s.is_bookable !== false)
+  const filteredServices = services.filter(s => {
+    const isSystemExtraTime = 
+      (s.name && s.name.toLowerCase().includes('integrazione durata')) || 
+      (s.category && s.category.toLowerCase().includes('extra time'));
+    
+    if (isSystemExtraTime) return false;
+
+    return showInactive ? true : s.is_bookable !== false;
+  })
 
   const categoriesMap = filteredServices.reduce((acc, service) => {
     const cat = service.category && service.category.trim() !== '' ? service.category : 'Generale';
@@ -184,38 +187,37 @@ export function AdminServices({ salonSettings = {} }) {
 
   return (
     <div style={{
-      '--primary-color': salonSettings.primary_color || '#2563eb',
-      '--accent-color': salonSettings.accent_color || '#D4AF37',
-      '--secondary-color': salonSettings.secondary_color || '#1E293B',
+      '--accent-color': '#C5A059',
+      '--text-main': '#f3f4f6',
+      '--text-muted': '#9ca3af',
+      '--border-color': '#2a3241',
       fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
-      padding: '4px'
+      padding: '4px',
+      color: 'var(--text-main)'
     }}>
-      {/* Header Sezione */}
       <div style={{ marginBottom: '24px' }}>
-        <h2 style={{ margin: 0, color: 'var(--secondary-color)', fontSize: '1.35rem', fontWeight: 700 }}>Gestione Listino Servizi & Prodotti</h2>
-        <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '13px' }}>Organizza l'offerta del salone, i prezzi e la durata dei trattamenti</p>
+        <h2 style={{ margin: 0, color: 'var(--text-main)', fontSize: '1.35rem', fontWeight: 700 }}>Gestione Listino Servizi & Prodotti</h2>
+        <p style={{ margin: '4px 0 0 0', color: 'var(--text-muted)', fontSize: '13px' }}>Organizza l'offerta del salone, i prezzi e la durata dei trattamenti</p>
       </div>
 
-      {/* Form Inserimento / Modifica */}
       <div 
         ref={formRef} 
         style={{ 
           marginBottom: '28px', 
-          borderLeft: `4px solid ${editingId ? '#ef4444' : 'var(--primary-color)'}`,
-          backgroundColor: '#ffffff',
+          backgroundColor: '#181c24',
           borderRadius: '12px',
           padding: '24px',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-          border: '1px solid #e2e8f0',
-          borderLeftWidth: '4px'
+          boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+          border: '1px solid var(--border-color)',
+          borderLeft: `4px solid ${editingId ? '#ef4444' : 'var(--accent-color)'}`
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
-          <h3 style={{ color: '#1e293b', margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
+          <h3 style={{ color: 'var(--text-main)', margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
             {editingId ? '✏️ Modifica Servizio / Prodotto' : '➕ Aggiungi Nuovo Servizio o Prodotto'}
           </h3>
           {editingId && (
-            <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', backgroundColor: '#fee2e2', color: '#991b1b', fontWeight: 600 }}>
+            <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', fontWeight: 600 }}>
               Modifica in corso
             </span>
           )}
@@ -224,7 +226,7 @@ export function AdminServices({ salonSettings = {} }) {
         <form onSubmit={handleSaveService} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <div style={{ flex: 2, minWidth: '220px' }}>
-              <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Nome *</label>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Nome *</label>
               <input 
                 type="text" 
                 placeholder="Es. Taglio Classico o Cera" 
@@ -234,17 +236,17 @@ export function AdminServices({ salonSettings = {} }) {
               />
             </div>
             <div style={{ flex: 1, minWidth: '160px' }}>
-              <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Tipo *</label>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Tipo *</label>
               <select value={type} onChange={e => setType(e.target.value)} style={inputStyle}>
-                <option value="service">Servizio</option>
-                <option value="product">Prodotto (Rivendita)</option>
+                <option value="service" style={{ backgroundColor: '#181c24', color: '#f3f4f6' }}>Servizio</option>
+                <option value="product" style={{ backgroundColor: '#181c24', color: '#f3f4f6' }}>Prodotto (Rivendita)</option>
               </select>
             </div>
           </div>
 
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: '160px' }}>
-              <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Categoria</label>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Categoria</label>
               <input 
                 type="text" 
                 placeholder="Es. Capelli, Barba, Trattamenti" 
@@ -254,7 +256,7 @@ export function AdminServices({ salonSettings = {} }) {
               />
             </div>
             <div style={{ flex: 1, minWidth: '120px' }}>
-              <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Prezzo (€) *</label>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Prezzo (€) *</label>
               <input 
                 type="number" 
                 step="0.50" 
@@ -265,7 +267,7 @@ export function AdminServices({ salonSettings = {} }) {
               />
             </div>
             <div style={{ flex: 1, minWidth: '120px' }}>
-              <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Durata (min) *</label>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Durata (min) *</label>
               <input 
                 type="number" 
                 placeholder="Es. 30" 
@@ -277,11 +279,11 @@ export function AdminServices({ salonSettings = {} }) {
           </div>
 
           <div style={{ display: 'flex', gap: '12px', marginTop: '6px' }}>
-            <button type="submit" style={{ ...btnStyle, backgroundColor: 'var(--primary-color)', flex: 1, boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)' }}>
+            <button type="submit" style={{ ...btnStyle, backgroundColor: 'var(--accent-color)', color: '#0f1115', flex: 1, boxShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>
               {editingId ? 'Salva Modifiche' : 'Aggiungi al Listino'}
             </button>
             {editingId && (
-              <button type="button" onClick={resetForm} style={{ ...btnStyle, backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', flex: 0.4 }}>
+              <button type="button" onClick={resetForm} style={{ ...btnStyle, backgroundColor: '#2a3241', color: 'var(--text-main)', border: '1px solid var(--border-color)', flex: 0.4 }}>
                 Annulla
               </button>
             )}
@@ -289,12 +291,11 @@ export function AdminServices({ salonSettings = {} }) {
         </form>
       </div>
 
-      {/* Lista Servizi Esistenti & Filtri */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
-        <h3 style={{ color: '#1e293b', margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>Listino Attuale</h3>
+        <h3 style={{ color: 'var(--text-main)', margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>Listino Attuale</h3>
         
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <label style={{ fontSize: '12px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontWeight: 500 }}>
+          <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontWeight: 500 }}>
             <input 
               type="checkbox" 
               checked={showInactive} 
@@ -304,27 +305,26 @@ export function AdminServices({ salonSettings = {} }) {
             Mostra anche disattivati
           </label>
 
-          <span style={{ fontSize: '12px', color: '#64748b', backgroundColor: '#f1f5f9', padding: '4px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontWeight: 600 }}>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)', backgroundColor: '#181c24', padding: '4px 10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 600 }}>
             {filteredServices.length} voci visibili
           </span>
         </div>
       </div>
 
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>Caricamento listino in corso...</div>
+        <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>Caricamento listino in corso...</div>
       ) : filteredServices.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '40px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px dashed #cbd5e1', color: '#64748b' }}>
+        <div style={{ textAlign: 'center', padding: '40px', backgroundColor: '#181c24', borderRadius: '12px', border: '1px dashed var(--border-color)', color: 'var(--text-muted)' }}>
           Nessun servizio trovato nel listino.
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           {Object.entries(categoriesMap).map(([categoryName, catServices]) => (
             <div key={categoryName}>
-              {/* Intestazione Categoria */}
               <div style={{ 
                 fontSize: '0.8rem', 
                 fontWeight: 700, 
-                color: 'var(--primary-color)', 
+                color: 'var(--accent-color)', 
                 marginBottom: '10px', 
                 textTransform: 'uppercase', 
                 letterSpacing: '0.5px',
@@ -333,10 +333,9 @@ export function AdminServices({ salonSettings = {} }) {
                 gap: '8px'
               }}>
                 <span style={{ fontSize: '14px' }}>{getCategoryIcon(categoryName)}</span> {categoryName} 
-                <span style={{ color: '#94a3b8', fontWeight: 400 }}>({catServices.length})</span>
+                <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({catServices.length})</span>
               </div>
 
-              {/* Servizi della categoria */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {catServices.map(s => {
                   const isInactive = s.is_bookable === false;
@@ -344,20 +343,19 @@ export function AdminServices({ salonSettings = {} }) {
                     <div key={s.id} style={{
                       padding: '14px 16px',
                       borderRadius: '12px',
-                      backgroundColor: isInactive ? '#f8fafc' : '#ffffff',
-                      border: '1px solid #e2e8f0',
-                      opacity: isInactive ? 0.7 : 1,
+                      backgroundColor: '#181c24',
+                      border: '1px solid var(--border-color)',
+                      opacity: isInactive ? 0.6 : 1,
                       display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      gap: '12px',
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+                      flexDirection: 'column',
+                      gap: '14px',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
                       transition: 'all 0.2s ease'
                     }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', width: '100%', minWidth: 0 }}>
                         <div style={{
-                          width: '38px', height: '38px', borderRadius: '10px', backgroundColor: s.type === 'product' ? '#f3e8ff' : '#e0f2fe',
-                          color: s.type === 'product' ? '#7e22ce' : '#0369a1', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          width: '38px', height: '38px', borderRadius: '10px', backgroundColor: s.type === 'product' ? 'rgba(126, 34, 206, 0.2)' : 'rgba(3, 105, 161, 0.2)',
+                          color: s.type === 'product' ? '#c084fc' : '#38bdf8', display: 'flex', alignItems: 'center', justifyContent: 'center',
                           fontSize: '16px', flexShrink: 0
                         }}>
                           {s.type === 'product' ? '🧴' : '✂️'}
@@ -365,30 +363,30 @@ export function AdminServices({ salonSettings = {} }) {
 
                         <div style={{ flex: 1, minWidth: '0' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '14px', fontWeight: 600, color: '#1e293b', textDecoration: isInactive ? 'line-through' : 'none' }}>
+                            <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-main)', textDecoration: isInactive ? 'line-through' : 'none' }}>
                               {s.name}
                             </span>
-                            <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '6px', backgroundColor: '#f1f5f9', color: '#475569', fontWeight: 600, border: '1px solid #e2e8f0' }}>
+                            <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '6px', backgroundColor: '#11141b', color: 'var(--text-muted)', fontWeight: 600, border: '1px solid var(--border-color)' }}>
                               {s.type === 'product' ? 'Prodotto' : 'Servizio'}
                             </span>
                             {isInactive && (
-                              <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '6px', backgroundColor: '#fee2e2', color: '#991b1b', fontWeight: 600 }}>
+                              <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '6px', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', fontWeight: 600 }}>
                                 Disattivato
                               </span>
                             )}
                           </div>
-                          <div style={{ fontSize: '12px', color: '#64748b', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                            <span>💰 <strong style={{ color: '#1e293b' }}>{parseFloat(s.price).toFixed(2)} €</strong></span>
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                            <span>💰 <strong style={{ color: 'var(--text-main)' }}>{parseFloat(s.price).toFixed(2)} €</strong></span>
                             <span>⏱️ {s.duration_minutes} min</span>
                           </div>
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                      <div style={{ display: 'flex', gap: '8px', width: '100%', justifyContent: 'flex-end', flexWrap: 'wrap', borderTop: '1px solid #222834', paddingTop: '12px' }}>
                         <button 
                           onClick={() => handleEditClick(s)}
                           title="Modifica"
-                          style={{ background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '7px 12px', color: '#475569', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+                          style={{ background: '#11141b', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '7px 12px', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
                         >
                           ✏️ Modifica
                         </button>
@@ -396,17 +394,17 @@ export function AdminServices({ salonSettings = {} }) {
                           onClick={() => handleToggleStatus(s)}
                           title={isInactive ? "Riattiva nel listino" : "Disattiva servizio"}
                           style={{ 
-                            background: '#ffffff', 
-                            border: '1px solid #cbd5e1', 
+                            background: '#11141b', 
+                            border: '1px solid var(--border-color)', 
                             borderRadius: '6px', 
                             padding: '7px 12px', 
-                            color: isInactive ? '#059669' : '#d97706', 
+                            color: isInactive ? '#4ade80' : '#fbbf24', 
                             cursor: 'pointer', 
                             fontSize: '12px', 
                             fontWeight: 600 
                           }}
                         >
-                          {isInactive ? '✅ Attiva' : '⏸️ Disattiva'}
+                          {isInactive ? '✅ Attiva' : '⏸️️ Disattiva'}
                         </button>
                       </div>
                     </div>
@@ -425,9 +423,9 @@ const inputStyle = {
   width: '100%',
   padding: '11px 14px',
   borderRadius: '8px',
-  border: '1px solid #cbd5e1',
-  backgroundColor: '#f8fafc',
-  color: '#1e293b',
+  border: '1px solid var(--border-color)',
+  backgroundColor: '#11141b',
+  color: 'var(--text-main)',
   boxSizing: 'border-box',
   fontSize: '14px',
   outline: 'none',
@@ -438,7 +436,6 @@ const btnStyle = {
   padding: '11px 16px',
   borderRadius: '8px',
   border: 'none',
-  color: '#FFF',
   fontWeight: 600,
   cursor: 'pointer',
   fontSize: '13px',

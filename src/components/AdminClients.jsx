@@ -12,6 +12,7 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
   const [showModal, setShowModal] = useState(false)
   const [editingClient, setEditingClient] = useState(null)
   const [fullName, setFullName] = useState('')
+  const [phonePrefix, setPhonePrefix] = useState('+39')
   const [phone, setPhone] = useState('')
   const [notes, setNotes] = useState('')
 
@@ -22,6 +23,7 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
       .channel('public-admin-clients')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'offline_clients' }, () => fetchAllClients())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchAllClients())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () => fetchAllClients())
       .subscribe()
 
     return () => {
@@ -32,30 +34,69 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
   async function fetchAllClients() {
     setLoading(true)
     try {
+      const todayStr = new Date().toLocaleDateString('sv-SE')
+      const nowTimeStr = new Date().toTimeString().slice(0, 5)
+
+      // 1. Carica profili app
       const { data: profilesData } = await supabase
         .from('profiles')
-        .select('id, first_name, last_name, email, phone, is_active')
+        .select('id, first_name, last_name, email, phone, is_active, role, is_owner')
+        .neq('role', 'admin')
+        .neq('is_owner', true)
         .order('first_name', { ascending: true })
+
+      // 2. Carica rubrica offline
+      const { data: offlineData } = await supabase
+        .from('offline_clients')
+        .select('*')
+        .order('full_name', { ascending: true })
+
+      // 3. Carica tutti gli appuntamenti futuri non cancellati per calcolare il "prossimo appuntamento"
+      const { data: futureApps } = await supabase
+        .from('appointments')
+        .select('id, user_id, offline_client_id, appointment_date, start_time')
+        .gte('appointment_date', todayStr)
+        .neq('status', 'cancelled')
+        .order('appointment_date', { ascending: true })
+        .order('start_time', { ascending: true })
+
+      // Filtra solo quelli realmente futuri (oggi ma orario successivo o date successive)
+      const validFutureApps = (futureApps || []).filter(app => {
+        if (app.appointment_date > todayStr) return true
+        if (app.appointment_date === todayStr && app.start_time > nowTimeStr) return true
+        return false
+      })
+
+      // Mappa per trovare il primo appuntamento per ogni utente app o cliente offline
+      const nextAppMapApp = {}
+      const nextAppMapOffline = {}
+
+      validFutureApps.forEach(app => {
+        if (app.user_id && !nextAppMapApp[app.user_id]) {
+          nextAppMapApp[app.user_id] = app
+        }
+        if (app.offline_client_id && !nextAppMapOffline[app.offline_client_id]) {
+          nextAppMapOffline[app.offline_client_id] = app
+        }
+      })
 
       if (profilesData) {
         setAppUsers(profilesData.map(u => ({
           ...u,
           type: 'app',
           is_active: u.is_active !== false,
-          displayName: `${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email
+          displayName: `${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email,
+          nextAppointment: nextAppMapApp[u.id] || null
         })).sort((a, b) => a.displayName.localeCompare(b.displayName)))
       }
-
-      const { data: offlineData } = await supabase
-        .from('offline_clients')
-        .select('*')
-        .order('full_name', { ascending: true })
 
       if (offlineData) {
         setOfflineClients(offlineData.map(c => ({
           ...c,
           type: 'offline',
-          displayName: c.full_name
+          is_active: c.is_active !== false,
+          displayName: c.full_name,
+          nextAppointment: nextAppMapOffline[c.id] || null
         })).sort((a, b) => a.displayName.localeCompare(b.displayName)))
       }
     } catch (err) {
@@ -75,6 +116,7 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
   })
 
   const filteredOfflineClients = offlineClients.filter(client => {
+    if (!client.is_active) return false
     const nameMatch = (client.displayName || '').toLowerCase().includes(term)
     const phoneMatch = (client.phone || '').toLowerCase().includes(term)
     const notesMatch = (client.notes || '').toLowerCase().includes(term)
@@ -82,6 +124,34 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
   })
 
   async function handleToggleAppUserStatus(userId, currentStatus, clientName) {
+    if (currentStatus) {
+      const todayStr = new Date().toLocaleDateString('sv-SE')
+      const nowTimeStr = new Date().toTimeString().slice(0, 5)
+
+      const { data: futureApps, error: appError } = await supabase
+        .from('appointments')
+        .select('id, appointment_date, start_time')
+        .eq('user_id', userId)
+        .gte('appointment_date', todayStr)
+        .neq('status', 'cancelled')
+
+      if (appError) {
+        alert("Errore durante il controllo degli appuntamenti: " + appError.message)
+        return
+      }
+
+      const trulyFutureApps = (futureApps || []).filter(app => {
+        if (app.appointment_date > todayStr) return true
+        if (app.appointment_date === todayStr && app.start_time > nowTimeStr) return true
+        return false
+      })
+
+      if (trulyFutureApps.length > 0) {
+        alert(`Impossibile disattivare l'utente "${clientName}". Ha ${trulyFutureApps.length} appuntamento/i futuro/i programmato/i.`)
+        return
+      }
+    }
+
     const actionText = currentStatus ? "disattivare (revocare l'accesso a)" : "riattivare"
     if (!window.confirm(`Sei sicuro di voler ${actionText} l'utente "${clientName}"?`)) return
 
@@ -98,11 +168,65 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
     }
   }
 
+  async function handleToggleOfflineClientStatus(clientId, currentStatus, clientName) {
+    if (currentStatus) {
+      const todayStr = new Date().toLocaleDateString('sv-SE')
+      const nowTimeStr = new Date().toTimeString().slice(0, 5)
+
+      const { data: futureApps, error: appError } = await supabase
+        .from('appointments')
+        .select('id, appointment_date, start_time')
+        .eq('offline_client_id', clientId)
+        .gte('appointment_date', todayStr)
+        .neq('status', 'cancelled')
+
+      if (appError) {
+        alert("Errore durante il controllo degli appuntamenti: " + appError.message)
+        return
+      }
+
+      const trulyFutureApps = (futureApps || []).filter(app => {
+        if (app.appointment_date > todayStr) return true
+        if (app.appointment_date === todayStr && app.start_time > nowTimeStr) return true
+        return false
+      })
+
+      if (trulyFutureApps.length > 0) {
+        alert(`Impossibile disattivare il cliente offline "${clientName}". Ha ${trulyFutureApps.length} appuntamento/i futuro/i programmato/i.`)
+        return
+      }
+    }
+
+    const actionText = currentStatus ? "disattivare" : "riattivare"
+    if (!window.confirm(`Sei sicuro di voler ${actionText} il cliente offline "${clientName}"?`)) return
+
+    try {
+      const { error } = await supabase
+        .from('offline_clients')
+        .update({ is_active: !currentStatus })
+        .eq('id', clientId)
+
+      if (error) throw error
+      fetchAllClients()
+    } catch (err) {
+      alert("Errore durante l'aggiornamento dello stato: " + err.message)
+    }
+  }
+
   async function handleSaveOfflineClient(e) {
     e.preventDefault()
     if (!fullName.trim()) {
       alert("Il nome del cliente è obbligatorio.")
       return
+    }
+
+    let formattedPhone = null
+    const rawPhone = phone.trim()
+    if (rawPhone) {
+      const numericPhone = rawPhone.replace(/[^0-9]/g, '')
+      if (numericPhone.length > 0) {
+        formattedPhone = `${phonePrefix}${numericPhone}`
+      }
     }
 
     try {
@@ -111,7 +235,7 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
           .from('offline_clients')
           .update({
             full_name: fullName.trim(),
-            phone: phone.trim() || null,
+            phone: formattedPhone,
             notes: notes.trim() || null
           })
           .eq('id', editingClient.id)
@@ -122,8 +246,9 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
           .from('offline_clients')
           .insert([{
             full_name: fullName.trim(),
-            phone: phone.trim() || 'N/D',
-            notes: notes.trim() || null
+            phone: formattedPhone || 'N/D',
+            notes: notes.trim() || null,
+            is_active: true
           }])
 
         if (error) throw error
@@ -136,24 +261,10 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
     }
   }
 
-  async function handleDeleteOfflineClient(clientId) {
-    if (!window.confirm("Sei sicuro di voler eliminare questo cliente dalla rubrica?")) return
-
-    const { error } = await supabase
-      .from('offline_clients')
-      .delete()
-      .eq('id', clientId)
-
-    if (error) {
-      alert("Errore eliminazione: " + error.message)
-    } else {
-      fetchAllClients()
-    }
-  }
-
   function openNewModal() {
     setEditingClient(null)
     setFullName('')
+    setPhonePrefix('+39')
     setPhone('')
     setNotes('')
     setShowModal(true)
@@ -166,8 +277,25 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
     }
     setEditingClient(client)
     setFullName(client.full_name || '')
-    setPhone(client.phone || '')
     setNotes(client.notes || '')
+
+    // Estrae prefisso e numero se presenti
+    const fullPhone = client.phone || ''
+    if (fullPhone.startsWith('+')) {
+      const knownPrefixes = ['+39', '+41', '+33', '+49', '+34', '+44']
+      const foundPrefix = knownPrefixes.find(p => fullPhone.startsWith(p))
+      if (foundPrefix) {
+        setPhonePrefix(foundPrefix)
+        setPhone(fullPhone.replace(foundPrefix, ''))
+      } else {
+        setPhonePrefix('+39')
+        setPhone(fullPhone)
+      }
+    } else {
+      setPhonePrefix('+39')
+      setPhone(fullPhone === 'N/D' ? '' : fullPhone)
+    }
+
     setShowModal(true)
   }
 
@@ -176,9 +304,15 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
     setEditingClient(null)
   }
 
-  const totalCount = appUsers.length + offlineClients.length
+  function formatDateIt(dateStr) {
+    if (!dateStr) return ''
+    const [y, m, d] = dateStr.split('-')
+    return `${d}/${m}/${y}`
+  }
 
-  // Funzione d'utilità per generare le iniziali dell'avatar
+  const activeOfflineCount = offlineClients.filter(c => c.is_active).length
+  const totalCount = appUsers.length + activeOfflineCount
+
   function getInitials(name) {
     if (!name) return '?'
     const parts = name.trim().split(' ')
@@ -190,79 +324,61 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
 
   return (
     <div style={{
-      '--primary-color': salonSettings.primary_color || '#2563eb',
-      '--accent-color': salonSettings.accent_color || '#D4AF37',
-      '--secondary-color': salonSettings.secondary_color || '#1E293B',
+      position: 'relative',
+      zIndex: 1,
+      '--accent-color': '#C5A059',
+      '--text-main': '#f3f4f6',
+      '--text-muted': '#9ca3af',
+      '--border-color': '#2a3241',
       fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
-      padding: '4px'
+      padding: '4px',
+      color: 'var(--text-main)'
     }}>
-      {/* Header Sezione */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <h2 style={{ margin: 0, color: 'var(--secondary-color)', fontSize: '1.35rem', fontWeight: 700 }}>Gestione Clienti</h2>
-          <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '13px' }}>Monitora gli utenti registrati all'app e la rubrica clienti offline ({totalCount} totali)</p>
+          <h2 style={{ margin: 0, color: 'var(--text-main)', fontSize: '1.35rem', fontWeight: 700 }}>Gestione Clienti</h2>
+          <p style={{ margin: '4px 0 0 0', color: 'var(--text-muted)', fontSize: '13px' }}>Monitora gli utenti registrati all'app e la rubrica clienti offline ({totalCount} totali)</p>
         </div>
         <button 
           onClick={openNewModal}
           style={{
-            backgroundColor: 'var(--primary-color)',
-            color: '#FFF',
-            border: 'none',
-            padding: '10px 18px',
-            borderRadius: '8px',
-            fontWeight: 600,
-            cursor: 'pointer',
-            fontSize: '13px',
-            boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            transition: 'all 0.2s ease'
+            backgroundColor: 'var(--accent-color)', color: '#0f1115', border: 'none',
+            padding: '10px 18px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer',
+            fontSize: '13px', boxShadow: '0 2px 4px rgba(0, 0, 0, 0.3)',
+            display: 'flex', alignItems: 'center', gap: '8px'
           }}
         >
           <span style={{ fontSize: '15px' }}>+</span> Nuovo Cliente Offline
         </button>
       </div>
 
-      {/* Sistema di Tab Moderno (Pill Style) */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', backgroundColor: '#f8fafc', padding: '4px', borderRadius: '10px', border: '1px solid #e2e8f0', width: 'fit-content' }}>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', backgroundColor: '#181c24', padding: '4px', borderRadius: '10px', border: '1px solid var(--border-color)', width: 'fit-content' }}>
         <button
           onClick={() => setActiveTab('app')}
           style={{
-            padding: '8px 16px',
-            borderRadius: '8px',
-            border: 'none',
-            backgroundColor: activeTab === 'app' ? '#ffffff' : 'transparent',
-            color: activeTab === 'app' ? 'var(--secondary-color)' : '#64748b',
-            fontWeight: activeTab === 'app' ? 600 : 500,
-            cursor: 'pointer',
-            fontSize: '13px',
-            boxShadow: activeTab === 'app' ? '0 1px 3px rgba(0,0,0,0.05)' : 'none',
-            transition: 'all 0.2s ease'
+            padding: '8px 16px', borderRadius: '8px', border: 'none',
+            backgroundColor: activeTab === 'app' ? '#222834' : 'transparent',
+            color: activeTab === 'app' ? 'var(--text-main)' : 'var(--text-muted)',
+            fontWeight: activeTab === 'app' ? 600 : 500, cursor: 'pointer', fontSize: '13px',
+            boxShadow: activeTab === 'app' ? '0 1px 3px rgba(0,0,0,0.2)' : 'none'
           }}
         >
-          📱 Utenti App <span style={{ marginLeft: '6px', backgroundColor: activeTab === 'app' ? 'var(--primary-color)' : '#e2e8f0', color: activeTab === 'app' ? '#fff' : '#475569', padding: '1px 6px', borderRadius: '10px', fontSize: '11px' }}>{appUsers.length}</span>
+          📱 Utenti App <span style={{ marginLeft: '6px', backgroundColor: activeTab === 'app' ? 'var(--accent-color)' : '#2a3241', color: activeTab === 'app' ? '#0f1115' : 'var(--text-muted)', padding: '1px 6px', borderRadius: '10px', fontSize: '11px', fontWeight: 700 }}>{appUsers.length}</span>
         </button>
         <button
           onClick={() => setActiveTab('offline')}
           style={{
-            padding: '8px 16px',
-            borderRadius: '8px',
-            border: 'none',
-            backgroundColor: activeTab === 'offline' ? '#ffffff' : 'transparent',
-            color: activeTab === 'offline' ? 'var(--secondary-color)' : '#64748b',
-            fontWeight: activeTab === 'offline' ? 600 : 500,
-            cursor: 'pointer',
-            fontSize: '13px',
-            boxShadow: activeTab === 'offline' ? '0 1px 3px rgba(0,0,0,0.05)' : 'none',
-            transition: 'all 0.2s ease'
+            padding: '8px 16px', borderRadius: '8px', border: 'none',
+            backgroundColor: activeTab === 'offline' ? '#222834' : 'transparent',
+            color: activeTab === 'offline' ? 'var(--text-main)' : 'var(--text-muted)',
+            fontWeight: activeTab === 'offline' ? 600 : 500, cursor: 'pointer', fontSize: '13px',
+            boxShadow: activeTab === 'offline' ? '0 1px 3px rgba(0,0,0,0.2)' : 'none'
           }}
         >
-          📒 Rubrica Offline <span style={{ marginLeft: '6px', backgroundColor: activeTab === 'offline' ? '#16a34a' : '#e2e8f0', color: activeTab === 'offline' ? '#fff' : '#475569', padding: '1px 6px', borderRadius: '10px', fontSize: '11px' }}>{offlineClients.length}</span>
+          📒 Rubrica Offline <span style={{ marginLeft: '6px', backgroundColor: activeTab === 'offline' ? '#4ade80' : '#2a3241', color: activeTab === 'offline' ? '#0f1115' : 'var(--text-muted)', padding: '1px 6px', borderRadius: '10px', fontSize: '11px', fontWeight: 700 }}>{activeOfflineCount}</span>
         </button>
       </div>
 
-      {/* Barra di Ricerca */}
       <div style={{ marginBottom: '24px', position: 'relative' }}>
         <input 
           type="text"
@@ -270,104 +386,74 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           style={{
-            width: '100%',
-            padding: '12px 16px 12px 40px',
-            borderRadius: '10px',
-            border: '1px solid #cbd5e1',
-            backgroundColor: '#ffffff',
-            color: '#1e293b',
-            outline: 'none',
-            fontSize: '14px',
-            boxSizing: 'border-box',
-            boxShadow: '0 1px 2px rgba(0,0,0,0.01)',
-            transition: 'border-color 0.2s'
+            width: '100%', padding: '12px 16px 12px 40px', borderRadius: '10px',
+            border: '1px solid var(--border-color)', backgroundColor: '#181c24', color: 'var(--text-main)',
+            outline: 'none', fontSize: '14px', boxSizing: 'border-box'
           }}
         />
-        <span style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: '15px' }}>
+        <span style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: '15px' }}>
           🔍
         </span>
       </div>
 
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>Caricamento in corso...</div>
+        <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>Caricamento in corso...</div>
       ) : (
         <div>
-          {/* TAB 1: UTENTI APP */}
           {activeTab === 'app' && (
             <div>
               {filteredAppUsers.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '40px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px dashed #cbd5e1', color: '#64748b' }}>
+                <div style={{ textAlign: 'center', padding: '40px', backgroundColor: '#181c24', borderRadius: '12px', border: '1px dashed var(--border-color)', color: 'var(--text-muted)' }}>
                   Nessun utente app trovato.
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   {filteredAppUsers.map(client => (
                     <div key={`app-${client.id}`} style={{
-                      padding: '16px',
-                      borderRadius: '12px',
-                      border: '1px solid #e2e8f0',
-                      backgroundColor: client.is_active ? '#ffffff' : '#fef2f2',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      gap: '16px',
-                      opacity: client.is_active ? 1 : 0.85,
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-                      transition: 'all 0.2s ease'
+                      padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)',
+                      backgroundColor: '#181c24',
+                      display: 'flex', flexDirection: 'column', gap: '14px', opacity: client.is_active ? 1 : 0.75,
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
                     }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0 }}>
-                        {/* Avatar con iniziali */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', width: '100%', minWidth: 0 }}>
                         <div style={{
-                          width: '42px', height: '42px', borderRadius: '50%', backgroundColor: client.is_active ? '#e0f2fe' : '#fee2e2',
-                          color: client.is_active ? '#0369a1' : '#991b1b', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          fontWeight: 700, fontSize: '14px', flexShrink: 0
+                          width: '42px', height: '42px', borderRadius: '50%', backgroundColor: client.is_active ? '#1e293b' : '#3f2222',
+                          color: client.is_active ? 'var(--accent-color)' : '#fca5a5', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontWeight: 700, fontSize: '14px', flexShrink: 0, border: '1px solid var(--border-color)'
                         }}>
                           {getInitials(client.displayName)}
                         </div>
-
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '14px', fontWeight: 600, color: '#1e293b' }}>{client.displayName}</span>
-                            <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '6px', backgroundColor: '#f1f5f9', color: '#475569', fontWeight: 600, border: '1px solid #e2e8f0' }}>
-                              App
-                            </span>
+                            <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-main)' }}>{client.displayName}</span>
+                            <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '6px', backgroundColor: '#222834', color: 'var(--text-muted)', fontWeight: 600 }}>App</span>
                             {!client.is_active && (
-                              <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '6px', backgroundColor: '#fee2e2', color: '#991b1b', fontWeight: 600 }}>
-                                🔒 Disattivato
+                              <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '6px', backgroundColor: '#451a03', color: '#fca5a5', fontWeight: 600 }}>🔒 Disattivato</span>
+                            )}
+                            {client.nextAppointment && (
+                              <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '6px', backgroundColor: '#143825', color: '#4ade80', border: '1px solid #1e462b', fontWeight: 600 }}>
+                                📅 Prossimo: {formatDateIt(client.nextAppointment.appointment_date)} alle {client.nextAppointment.start_time.slice(0, 5)}
                               </span>
                             )}
                           </div>
-                          <div style={{ fontSize: '12px', color: '#64748b', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                             <span>📞 {client.phone || 'Nessun telefono'}</span>
                             <span>✉️ {client.email || 'Nessuna email'}</span>
                           </div>
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                      <div style={{ display: 'flex', gap: '8px', width: '100%', justifyContent: 'flex-end', flexWrap: 'wrap', borderTop: '1px solid #222834', paddingTop: '12px' }}>
                         <button 
                           onClick={() => handleToggleAppUserStatus(client.id, client.is_active, client.displayName)}
-                          title={client.is_active ? "Disattiva accesso" : "Riattiva accesso"}
-                          style={{ 
-                            background: '#ffffff', 
-                            border: '1px solid #cbd5e1', 
-                            color: client.is_active ? '#dc2626' : '#16a34a', 
-                            padding: '7px 12px', 
-                            borderRadius: '6px', 
-                            cursor: 'pointer', 
-                            fontSize: '12px',
-                            fontWeight: 600,
-                            transition: 'background 0.15s'
-                          }}
+                          style={{ background: '#11141b', border: '1px solid var(--border-color)', color: client.is_active ? '#fca5a5' : '#4ade80', padding: '7px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
                         >
                           {client.is_active ? 'Disattiva' : 'Riattiva'}
                         </button>
-
                         {onSelectClientForBooking && client.is_active && (
                           <button 
                             onClick={() => onSelectClientForBooking(client)}
-                            title="Prenota per questo cliente"
-                            style={{ backgroundColor: 'var(--primary-color)', color: '#FFF', border: 'none', padding: '7px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}
+                            style={{ backgroundColor: 'var(--accent-color)', color: '#0f1115', border: 'none', padding: '7px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '12px' }}
                           >
                             Prenota
                           </button>
@@ -380,72 +466,63 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
             </div>
           )}
 
-          {/* TAB 2: CLIENTI OFFLINE */}
           {activeTab === 'offline' && (
             <div>
               {filteredOfflineClients.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '40px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px dashed #cbd5e1', color: '#64748b' }}>
-                  Nessun cliente offline trovato nella rubrica.
+                <div style={{ textAlign: 'center', padding: '40px', backgroundColor: '#181c24', borderRadius: '12px', border: '1px dashed var(--border-color)', color: 'var(--text-muted)' }}>
+                  Nessun cliente offline attivo trovato nella rubrica.
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   {filteredOfflineClients.map(client => (
                     <div key={`offline-${client.id}`} style={{
-                      padding: '16px',
-                      borderRadius: '12px',
-                      border: '1px solid #e2e8f0',
-                      backgroundColor: '#ffffff',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      gap: '16px',
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-                      transition: 'all 0.2s ease'
+                      padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)',
+                      backgroundColor: '#181c24', display: 'flex', flexDirection: 'column', gap: '14px',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
                     }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0 }}>
-                        {/* Avatar con iniziali */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', width: '100%', minWidth: 0 }}>
                         <div style={{
-                          width: '42px', height: '42px', borderRadius: '50%', backgroundColor: '#dcfce7',
-                          color: '#166534', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          fontWeight: 700, fontSize: '14px', flexShrink: 0
+                          width: '42px', height: '42px', borderRadius: '50%', backgroundColor: '#143825',
+                          color: '#4ade80', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontWeight: 700, fontSize: '14px', flexShrink: 0, border: '1px solid #1e462b'
                         }}>
                           {getInitials(client.displayName)}
                         </div>
-
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '14px', fontWeight: 600, color: '#1e293b' }}>{client.displayName}</span>
-                            <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '6px', backgroundColor: '#dcfce7', color: '#166534', fontWeight: 600 }}>
-                              Offline
-                            </span>
+                            <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-main)' }}>{client.displayName}</span>
+                            <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '6px', backgroundColor: '#143825', color: '#4ade80', fontWeight: 600 }}>Offline</span>
+                            {client.nextAppointment && (
+                              <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '6px', backgroundColor: '#143825', color: '#4ade80', border: '1px solid #1e462b', fontWeight: 600 }}>
+                                📅 Prossimo: {formatDateIt(client.nextAppointment.appointment_date)} alle {client.nextAppointment.start_time.slice(0, 5)}
+                              </span>
+                            )}
                           </div>
-                          <div style={{ fontSize: '12px', color: '#64748b', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                             <span>📞 {client.phone || 'Nessun telefono'}</span>
-                            {client.notes && <span style={{ fontStyle: 'italic', color: '#d97706' }}>Note: {client.notes}</span>}
+                            {client.notes && <span style={{ fontStyle: 'italic', color: '#fbbf24' }}>Note: {client.notes}</span>}
                           </div>
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                      <div style={{ display: 'flex', gap: '8px', width: '100%', justifyContent: 'flex-end', flexWrap: 'wrap', borderTop: '1px solid #222834', paddingTop: '12px' }}>
                         <button 
                           onClick={() => openEditModal(client)}
-                          title="Modifica"
-                          style={{ background: '#ffffff', border: '1px solid #cbd5e1', color: '#475569', padding: '7px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+                          style={{ background: '#11141b', border: '1px solid var(--border-color)', color: 'var(--text-muted)', padding: '7px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
                         >
                           ✏️ Modifica
                         </button>
                         <button 
-                          onClick={() => handleDeleteOfflineClient(client.id)}
-                          title="Elimina"
-                          style={{ background: '#ffffff', border: '1px solid #cbd5e1', color: '#dc2626', padding: '7px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+                          onClick={() => handleToggleOfflineClientStatus(client.id, client.is_active, client.displayName)}
+                          title="Disattiva cliente"
+                          style={{ background: '#11141b', border: '1px solid var(--border-color)', color: '#fca5a5', padding: '7px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
                         >
-                          🗑️
+                          🔒 Disattiva
                         </button>
                         {onSelectClientForBooking && (
                           <button 
                             onClick={() => onSelectClientForBooking(client)}
-                            title="Prenota per questo cliente"
-                            style={{ backgroundColor: 'var(--primary-color)', color: '#FFF', border: 'none', padding: '7px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}
+                            style={{ backgroundColor: 'var(--accent-color)', color: '#0f1115', border: 'none', padding: '7px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '12px' }}
                           >
                             Prenota
                           </button>
@@ -460,49 +537,72 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
         </div>
       )}
 
-      {/* Modale Professionale */}
       {showModal && (
         <div style={{
           position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-          backgroundColor: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'center', alignItems: 'center',
+          backgroundColor: 'rgba(11, 14, 19, 0.75)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'center', alignItems: 'center',
           zIndex: 2000, padding: '20px', boxSizing: 'border-box'
         }}>
           <div style={{
-            backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '16px',
-            padding: '28px', width: '100%', maxWidth: '440px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)'
+            backgroundColor: '#181c24', border: '1px solid var(--border-color)', borderRadius: '16px',
+            padding: '28px', width: '100%', maxWidth: '440px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h3 style={{ color: '#1e293b', margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
+              <h3 style={{ color: 'var(--text-main)', margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
                 {editingClient ? 'Modifica Cliente Offline' : 'Censisci Nuovo Cliente Offline'}
               </h3>
-              <button onClick={closeModal} style={{ background: 'transparent', border: 'none', fontSize: '16px', cursor: 'pointer', color: '#64748b' }}>✕</button>
+              <button onClick={closeModal} style={{ background: 'transparent', border: 'none', fontSize: '16px', cursor: 'pointer', color: 'var(--text-muted)' }}>✕</button>
             </div>
 
             <form onSubmit={handleSaveOfflineClient} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Nome e Cognome *</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Nome e Cognome *</label>
                 <input 
                   type="text" required placeholder="Es: Mario Rossi" value={fullName}
                   onChange={(e) => setFullName(e.target.value)} style={modalInputStyle}
                 />
               </div>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Telefono</label>
-                <input 
-                  type="text" placeholder="Es: 3331234567" value={phone}
-                  onChange={(e) => setPhone(e.target.value)} style={modalInputStyle}
-                />
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Telefono</label>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <select 
+                    value={phonePrefix} 
+                    onChange={e => setPhonePrefix(e.target.value)}
+                    style={{
+                      ...modalInputStyle,
+                      flex: '0 0 85px',
+                      padding: '11px 4px',
+                      cursor: 'pointer',
+                      fontSize: '13px'
+                    }}
+                  >
+                    <option value="+39">🇮🇹 +39</option>
+                    <option value="+41">🇨🇭 +41</option>
+                    <option value="+33">🇫🇷 +33</option>
+                    <option value="+49">🇩🇪 +49</option>
+                    <option value="+34">🇪🇸 +34</option>
+                    <option value="+44">🇬🇧 +44</option>
+                  </select>
+
+                  <input 
+                    type="tel" 
+                    placeholder="Es: 3331234567" 
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)} 
+                    style={{ ...modalInputStyle, flex: 1 }} 
+                  />
+                </div>
               </div>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Note</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Note</label>
                 <textarea 
                   placeholder="Note opzionali sulle preferenze o annotazioni..." value={notes}
                   onChange={(e) => setNotes(e.target.value)} style={{ ...modalInputStyle, height: '90px', resize: 'vertical' }}
                 />
               </div>
               <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
-                <button type="button" onClick={closeModal} style={{ flex: 1, padding: '11px', backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', fontSize: '13px' }}>Annulla</button>
-                <button type="submit" style={{ flex: 1, padding: '11px', backgroundColor: 'var(--primary-color)', color: '#FFF', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', fontSize: '13px', boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)' }}>Salva Cliente</button>
+                <button type="button" onClick={closeModal} style={{ flex: 1, padding: '11px', backgroundColor: '#222834', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', fontSize: '13px' }}>Annulla</button>
+                <button type="submit" style={{ flex: 1, padding: '11px', backgroundColor: 'var(--accent-color)', color: '#0f1115', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', fontSize: '13px' }}>Salva Cliente</button>
               </div>
             </form>
           </div>
@@ -513,7 +613,7 @@ export function AdminClients({ onSelectClientForBooking, salonSettings = {} }) {
 }
 
 const modalInputStyle = {
-  width: '100%', padding: '11px 14px', borderRadius: '8px', border: '1px solid #cbd5e1',
-  backgroundColor: '#f8fafc', color: '#1e293b', boxSizing: 'border-box', outline: 'none', fontSize: '14px',
+  width: '100%', padding: '11px 14px', borderRadius: '8px', border: '1px solid var(--border-color)',
+  backgroundColor: '#11141b', color: 'var(--text-main)', boxSizing: 'border-box', outline: 'none', fontSize: '14px',
   transition: 'border-color 0.2s'
 }

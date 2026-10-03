@@ -4,8 +4,7 @@ export function Navigation({ activeTab, setActiveTab, isAdmin, pendingCount, sal
   return (
     <nav style={{
       ...navBarStyle,
-      '--primary-color': salonSettings.primary_color || '#2563eb',
-      '--accent-color': salonSettings.accent_color || '#D4AF37',
+      '--accent-color': '#C5A059',
     }} aria-label="Navigazione principale">
       <button 
         onClick={() => setActiveTab('info')} 
@@ -71,10 +70,10 @@ const navBarStyle = {
   transform: 'translateX(-50%)',
   width: '100%',
   maxWidth: '480px', 
-  backgroundColor: 'rgba(255, 255, 255, 0.92)', 
+  backgroundColor: 'rgba(15, 17, 21, 0.85)', 
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
-  borderTop: '1px solid #e2e8f0', 
+  borderTop: '1px solid #2a3241', 
   display: 'flex', 
   justifyContent: 'space-around', 
   alignItems: 'center',
@@ -82,14 +81,14 @@ const navBarStyle = {
   paddingBottom: 'calc(8px + env(safe-area-inset-bottom))', 
   boxSizing: 'border-box',
   zIndex: 1000,
-  boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.06)',
+  boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.4)',
   fontFamily: 'Inter, system-ui, -apple-system, sans-serif'
 }
 
 const navBtnStyle = (isActive) => ({ 
   background: 'none', 
   border: 'none', 
-  color: isActive ? 'var(--primary-color)' : '#64748b', 
+  color: isActive ? 'var(--accent-color)' : '#9ca3af', 
   fontSize: '11px', 
   fontWeight: isActive ? '700' : '500', 
   cursor: 'pointer', 
@@ -117,12 +116,12 @@ const badgeStyle = {
   position: 'absolute',
   top: '4px',
   right: '22%',
-  backgroundColor: 'var(--accent-color, #2563eb)',
-  color: '#ffffff',
+  backgroundColor: 'var(--accent-color, #C5A059)',
+  color: '#0f1115',
   fontSize: '10px',
   fontWeight: 'bold',
   borderRadius: '10px',
   padding: '1px 5px',
-  border: '2px solid #ffffff',
-  boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+  border: '2px solid #0f1115',
+  boxShadow: '0 2px 4px rgba(0,0,0,0.3)'
 }

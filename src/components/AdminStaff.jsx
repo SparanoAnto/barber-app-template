@@ -432,16 +432,18 @@ export function AdminStaff({ salonSettings = {} }) {
     <div style={{ 
       position: 'relative', 
       zIndex: 1,
-      '--primary-color': salonSettings.primary_color || '#2563eb',
-      '--accent-color': salonSettings.accent_color || '#D4AF37',
-      '--secondary-color': salonSettings.secondary_color || '#1E293B',
+      '--accent-color': '#C5A059',
+      '--text-main': '#f3f4f6',
+      '--text-muted': '#9ca3af',
+      '--border-color': '#2a3241',
       fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
-      padding: '4px'
+      padding: '4px',
+      color: 'var(--text-main)'
     }}>
       {/* Header Sezione */}
       <div style={{ marginBottom: '24px' }}>
-        <h2 style={{ margin: 0, color: 'var(--secondary-color)', fontSize: '1.35rem', fontWeight: 700 }}>Gestione Staff & Ferie</h2>
-        <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '13px' }}>Pianifica gli orari degli operatori, i giorni di chiusura collettiva e i permessi individuali</p>
+        <h2 style={{ margin: 0, color: 'var(--text-main)', fontSize: '1.35rem', fontWeight: 700 }}>Gestione Staff & Ferie</h2>
+        <p style={{ margin: '4px 0 0 0', color: 'var(--text-muted)', fontSize: '13px' }}>Pianifica gli orari degli operatori, i giorni di chiusura collettiva e i permessi individuali</p>
       </div>
 
       <div className="admin-staff-responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px' }}>
@@ -450,35 +452,37 @@ export function AdminStaff({ salonSettings = {} }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
           {/* Chiusura Collettiva */}
-          <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', borderLeft: '4px solid var(--primary-color)', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-            <h3 style={{ color: '#1e293b', marginTop: 0, marginBottom: '18px', fontSize: '1.1rem', fontWeight: 700 }}>🏖️ Chiusura Collettiva / Ferie Salone</h3>
+          <div style={{ backgroundColor: '#181c24', padding: '24px', borderRadius: '12px', border: '1px solid var(--border-color)', borderLeft: '4px solid var(--accent-color)', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ color: 'var(--text-main)', marginTop: 0, marginBottom: '18px', fontSize: '1.1rem', fontWeight: 700 }}>🏖️ Chiusura Collettiva / Ferie Salone</h3>
             <form onSubmit={handleAddClosure} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Dal giorno:</label>
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: '130px' }}>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Dal giorno:</label>
                   <input type="date" min={todayString} value={closureStartDate} onChange={e => setClosureStartDate(e.target.value)} style={inputStyle} />
                 </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Al giorno:</label>
+                <div style={{ flex: 1, minWidth: '130px' }}>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Al giorno:</label>
                   <input type="date" min={closureStartDate || todayString} value={closureEndDate} onChange={e => setClosureEndDate(e.target.value)} style={inputStyle} />
                 </div>
               </div>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Motivo:</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Motivo:</label>
                 <input type="text" placeholder="Es. Ferie Estive / Natale" value={closureReason} onChange={e => setClosureReason(e.target.value)} style={inputStyle} />
               </div>
-              <button type="submit" style={{ ...btnStyle, backgroundColor: 'var(--primary-color)', marginTop: '4px', boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)' }}>
+              <button type="submit" style={{ ...btnStyle, backgroundColor: 'var(--accent-color)', color: '#0f1115', marginTop: '4px', boxShadow: '0 2px 4px rgba(0, 0, 0, 0.3)' }}>
                 Registra Chiusura Salone
               </button>
             </form>
 
             {closures.length > 0 && (
               <div style={{ marginTop: '18px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <span style={{ fontSize: '12px', fontWeight: 600, color: '#64748b' }}>Chiusure attive programmate:</span>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Chiusure attive programmate:</span>
                 {closures.map(c => (
-                  <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                    <span style={{ fontSize: '13px', color: '#1e293b' }}><strong>{c.reason}</strong> ({c.start_date} ➔ {c.end_date})</span>
-                    <button onClick={() => handleDeleteClosure(c.id)} style={{ background: 'transparent', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '14px' }}>🗑️</button>
+                  <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#11141b', borderRadius: '8px', border: '1px solid var(--border-color)', gap: '10px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--text-main)', wordBreak: 'break-word', flex: 1, minWidth: '180px' }}>
+                      <strong>{c.reason}</strong> ({c.start_date} ➔ {c.end_date})
+                    </span>
+                    <button onClick={() => handleDeleteClosure(c.id)} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '14px', flexShrink: 0 }}>🗑️</button>
                   </div>
                 ))}
               </div>
@@ -486,25 +490,25 @@ export function AdminStaff({ salonSettings = {} }) {
           </div>
 
           {/* Aggiungi Operatore */}
-          <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', borderLeft: '4px solid var(--accent-color)', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-            <h3 style={{ color: '#1e293b', marginTop: 0, marginBottom: '18px', fontSize: '1.1rem', fontWeight: 700 }}>➕ Aggiungi Nuovo Operatore</h3>
+          <div style={{ backgroundColor: '#181c24', padding: '24px', borderRadius: '12px', border: '1px solid var(--border-color)', borderLeft: '4px solid var(--accent-color)', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ color: 'var(--text-main)', marginTop: 0, marginBottom: '18px', fontSize: '1.1rem', fontWeight: 700 }}>➕ Aggiungi Nuovo Operatore</h3>
             <form onSubmit={handleAddBarber} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Nome Operatore:</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Nome Operatore:</label>
                 <input type="text" placeholder="Es. Marco Rossi" value={newBarberName} onChange={e => setNewBarberName(e.target.value)} style={inputStyle} />
               </div>
-              <button type="submit" style={{ ...btnStyle, backgroundColor: '#10b981', marginTop: '4px', boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)' }}>
+              <button type="submit" style={{ ...btnStyle, backgroundColor: '#10b981', color: '#fff', marginTop: '4px', boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)' }}>
                 Salva Nuovo Operatore
               </button>
             </form>
           </div>
 
           {/* Programma Assenza Singolo */}
-          <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', borderLeft: '4px solid #ef4444', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-            <h3 style={{ color: '#1e293b', marginTop: 0, marginBottom: '18px', fontSize: '1.1rem', fontWeight: 700 }}>📅 Programma Assenza o Permesso Singolo</h3>
+          <div style={{ backgroundColor: '#181c24', padding: '24px', borderRadius: '12px', border: '1px solid var(--border-color)', borderLeft: '4px solid #ef4444', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ color: 'var(--text-main)', marginTop: 0, marginBottom: '18px', fontSize: '1.1rem', fontWeight: 700 }}>📅 Programma Assenza o Permesso Singolo</h3>
             <form onSubmit={handleAddException} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Operatore:</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Operatore:</label>
                 <select value={selectedBarber} onChange={e => setSelectedBarber(e.target.value)} style={inputStyle}>
                   <option value="">-- Seleziona Operatore --</option>
                   {barbers.map(b => (
@@ -514,27 +518,27 @@ export function AdminStaff({ salonSettings = {} }) {
               </div>
 
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Data:</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Data:</label>
                 <input type="date" min={todayString} value={exceptionDate} onChange={e => setExceptionDate(e.target.value)} style={inputStyle} />
               </div>
 
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Dalle ore (opz.):</label>
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: '120px' }}>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Dalle ore (opz.):</label>
                   <input type="time" value={excStartTime} onChange={e => setExcStartTime(e.target.value)} style={inputStyle} />
                 </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Alle ore (opz.):</label>
+                <div style={{ flex: 1, minWidth: '120px' }}>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Alle ore (opz.):</label>
                   <input type="time" value={excEndTime} onChange={e => setExcEndTime(e.target.value)} style={inputStyle} />
                 </div>
               </div>
 
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Motivo:</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Motivo:</label>
                 <input type="text" placeholder="Es. Permesso medico" value={exceptionReason} onChange={e => setExceptionReason(e.target.value)} style={inputStyle} />
               </div>
 
-              <button type="submit" style={{ ...btnStyle, backgroundColor: '#ef4444', marginTop: '4px', boxShadow: '0 2px 4px rgba(239, 68, 68, 0.2)' }}>
+              <button type="submit" style={{ ...btnStyle, backgroundColor: '#ef4444', color: '#fff', marginTop: '4px', boxShadow: '0 2px 4px rgba(239, 68, 68, 0.2)' }}>
                 Registra Assenza
               </button>
             </form>
@@ -546,41 +550,41 @@ export function AdminStaff({ salonSettings = {} }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
           {/* Configurazione Operatori & Orari Giornalieri */}
-          <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', borderLeft: '4px solid var(--secondary-color)', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-            <h3 style={{ color: '#1e293b', marginBottom: '18px', marginTop: 0, fontSize: '1.1rem', fontWeight: 700 }}>⚙️ Configurazione Operatori (Orari & Uscite)</h3>
+          <div style={{ backgroundColor: '#181c24', padding: '24px', borderRadius: '12px', border: '1px solid var(--border-color)', borderLeft: '4px solid var(--accent-color)', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ color: 'var(--text-main)', marginBottom: '18px', marginTop: 0, fontSize: '1.1rem', fontWeight: 700 }}>⚙️ Configurazione Operatori (Orari & Uscite)</h3>
             {loading && barbers.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '20px', color: '#64748b' }}>Caricamento operatori...</div>
+              <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)' }}>Caricamento operatori...</div>
             ) : barbers.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '20px', color: '#64748b', fontSize: '13px' }}>Nessun operatore registrato.</div>
+              <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)', fontSize: '13px' }}>Nessun operatore registrato.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 {barbers.map(b => {
                   return (
-                    <div key={b.id} style={{ padding: '16px', borderRadius: '10px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div key={b.id} style={{ padding: '16px', borderRadius: '10px', backgroundColor: '#11141b', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                       
                       {/* Intestazione */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <strong style={{ color: '#1e293b', fontSize: '1rem' }}>{b.name}</strong>
-                          <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '6px', backgroundColor: b.is_active ? '#dcfce7' : '#fee2e2', color: b.is_active ? '#15803d' : '#b91c1c', fontWeight: 600 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                          <strong style={{ color: 'var(--text-main)', fontSize: '1rem' }}>{b.name}</strong>
+                          <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '6px', backgroundColor: b.is_active ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)', color: b.is_active ? '#4ade80' : '#fca5a5', fontWeight: 600 }}>
                             {b.is_active ? 'Attivo' : 'Disattivato'}
                           </span>
                         </div>
-                        <button onClick={() => handleToggleActive(b)} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: b.is_active ? '#fee2e2' : '#dcfce7', color: b.is_active ? '#b91c1c' : '#15803d', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}>
+                        <button onClick={() => handleToggleActive(b)} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: b.is_active ? 'rgba(239, 68, 68, 0.15)' : 'rgba(34, 197, 94, 0.15)', color: b.is_active ? '#fca5a5' : '#4ade80', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}>
                           {b.is_active ? 'Disattiva' : 'Attiva'}
                         </button>
                       </div>
 
                       {/* Giorni lavorativi e orari specifici */}
                       <div>
-                        <span style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', display: 'block', marginBottom: '8px' }}>Giorni lavorativi e orari dedicati (opzionali):</span>
+                        <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>Giorni lavorativi e orari dedicati (opzionali):</span>
                         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                           {DAYS_OF_WEEK.map(day => {
                             const wdObj = workingDays.find(wd => wd.barber_id === b.id && wd.day_of_week === day.id)
                             const isWorking = !!wdObj
 
                             return (
-                              <div key={day.id} style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '6px', background: '#ffffff', borderRadius: '8px', border: '1px solid #e2e8f0', minWidth: '68px', alignItems: 'center' }}>
+                              <div key={day.id} style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '6px', background: '#181c24', borderRadius: '8px', border: '1px solid var(--border-color)', minWidth: '68px', flex: 1, alignItems: 'center' }}>
                                 <button
                                   type="button"
                                   onClick={() => handleToggleWorkingDay(b.id, day.id)}
@@ -590,9 +594,9 @@ export function AdminStaff({ salonSettings = {} }) {
                                     fontSize: '11px',
                                     fontWeight: 600,
                                     cursor: 'pointer',
-                                    border: isWorking ? '1px solid var(--primary-color)' : '1px solid #cbd5e1',
-                                    backgroundColor: isWorking ? 'var(--primary-color)' : '#f1f5f9',
-                                    color: isWorking ? '#FFF' : '#64748b',
+                                    border: isWorking ? '1px solid var(--accent-color)' : '1px solid var(--border-color)',
+                                    backgroundColor: isWorking ? 'var(--accent-color)' : '#11141b',
+                                    color: isWorking ? '#0f1115' : 'var(--text-muted)',
                                     width: '100%'
                                   }}
                                 >
@@ -624,9 +628,9 @@ export function AdminStaff({ salonSettings = {} }) {
                       </div>
 
                       {/* Data fine rapporto */}
-                      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', marginTop: '4px' }}>
-                        <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', display: 'block', marginBottom: '4px' }}>Data Uscita / Fine Rapporto (Opzionale):</label>
+                      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
+                        <div style={{ flex: 1, minWidth: '200px' }}>
+                          <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Data Uscita / Fine Rapporto (Opzionale):</label>
                           <div style={{ display: 'flex', gap: '6px' }}>
                             <input 
                               type="date" 
@@ -639,7 +643,7 @@ export function AdminStaff({ salonSettings = {} }) {
                                 type="button" 
                                 onClick={() => setTerminationDates({ ...terminationDates, [b.id]: '' })}
                                 title="Cancella data"
-                                style={{ padding: '0 10px', backgroundColor: '#fee2e2', border: '1px solid #cbd5e1', borderRadius: '8px', color: '#b91c1c', cursor: 'pointer', fontSize: '14px', fontWeight: 600 }}
+                                style={{ padding: '0 10px', backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fca5a5', cursor: 'pointer', fontSize: '14px', fontWeight: 600 }}
                               >
                                 ✕
                               </button>
@@ -649,7 +653,7 @@ export function AdminStaff({ salonSettings = {} }) {
                         <button 
                           type="button" 
                           onClick={() => handleSaveTerminationDate(b.id)}
-                          style={{ padding: '9px 14px', backgroundColor: '#334155', border: '1px solid #cbd5e1', borderRadius: '8px', color: '#FFF', fontSize: '12px', cursor: 'pointer', fontWeight: 600, height: '38px' }}
+                          style={{ padding: '9px 14px', backgroundColor: '#334155', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#FFF', fontSize: '12px', cursor: 'pointer', fontWeight: 600, height: '38px', flexShrink: 0 }}
                         >
                           Salva Uscita
                         </button>
@@ -663,26 +667,26 @@ export function AdminStaff({ salonSettings = {} }) {
           </div>
 
           {/* Lista Assenze Future */}
-          <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-            <h3 style={{ color: '#1e293b', marginBottom: '14px', marginTop: 0, fontSize: '1.1rem', fontWeight: 700 }}>Assenze Individuali Programmate</h3>
+          <div style={{ backgroundColor: '#181c24', padding: '24px', borderRadius: '12px', border: '1px solid var(--border-color)', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ color: 'var(--text-main)', marginBottom: '14px', marginTop: 0, fontSize: '1.1rem', fontWeight: 700 }}>Assenze Individuali Programmate</h3>
             {loading && exceptions.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '20px', color: '#64748b' }}>Caricamento assenze...</div>
+              <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)' }}>Caricamento assenze...</div>
             ) : exceptions.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '20px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1', color: '#64748b', fontSize: '13px' }}>
+              <div style={{ textAlign: 'center', padding: '20px', backgroundColor: '#11141b', borderRadius: '8px', border: '1px dashed var(--border-color)', color: 'var(--text-muted)', fontSize: '13px' }}>
                 Nessuna assenza futura registrata.
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {exceptions.map(exc => (
-                  <div key={exc.id} style={{ padding: '12px 14px', borderRadius: '8px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-                    <div>
-                      <strong style={{ color: '#1e293b', fontSize: '0.95rem' }}>{exc.barbers?.name || 'Operatore'}</strong>
-                      <div style={{ fontSize: '12px', color: '#64748b', marginTop: '3px' }}>
+                  <div key={exc.id} style={{ padding: '12px 14px', borderRadius: '8px', backgroundColor: '#11141b', border: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.2)', gap: '10px', flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: '180px', wordBreak: 'break-word' }}>
+                      <strong style={{ color: 'var(--text-main)', fontSize: '0.95rem' }}>{exc.barbers?.name || 'Operatore'}</strong>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '3px' }}>
                         📅 {exc.date} ({getDayName(exc.date)}) {exc.start_time && exc.end_time ? `🕒 ${exc.start_time.slice(0,5)} - ${exc.end_time.slice(0,5)}` : '(Tutto il giorno)'}
                       </div>
-                      <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>Note: {exc.reason}</div>
+                      <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>Note: {exc.reason}</div>
                     </div>
-                    <button onClick={() => handleDeleteException(exc.id)} style={{ background: 'transparent', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '14px' }}>🗑️</button>
+                    <button onClick={() => handleDeleteException(exc.id)} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '14px', flexShrink: 0 }}>🗑️</button>
                   </div>
                 ))}
               </div>
@@ -700,9 +704,9 @@ const inputStyle = {
   width: '100%',
   padding: '11px 14px',
   borderRadius: '8px',
-  border: '1px solid #cbd5e1',
-  backgroundColor: '#f8fafc',
-  color: '#1e293b',
+  border: '1px solid var(--border-color)',
+  backgroundColor: '#11141b',
+  color: 'var(--text-main)',
   boxSizing: 'border-box',
   fontSize: '14px',
   outline: 'none',
@@ -714,7 +718,6 @@ const btnStyle = {
   padding: '11px 16px',
   borderRadius: '8px',
   border: 'none',
-  color: '#FFF',
   fontWeight: 600,
   cursor: 'pointer',
   fontSize: '13px',

@@ -18,6 +18,7 @@ export function Auth({
   
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
+  const [phonePrefix, setPhonePrefix] = useState('+39')
   const [phone, setPhone] = useState('')
   const [age, setAge] = useState('')
   
@@ -78,7 +79,7 @@ export function Auth({
           .eq('id', authData.user.id)
           .single()
 
-        if (profileError || (profileData && profileData.is_active === false)) {
+        if (!profileError && profileData && profileData.is_active === false) {
           await supabase.auth.signOut()
           setAuthError("Il tuo account è stato disattivato dall'amministratore. Contatta il salone per maggiori informazioni.")
           setLoading(false)
@@ -99,27 +100,8 @@ export function Auth({
     setLoading(true)
 
     try {
-      // 1. Controllo preliminare: verifichiamo se l'email esiste nella tabella profiles
-      const { data: profileData, error: profileError } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('email', email)
-        .maybeSingle()
-
-      if (profileError) {
-        throw new Error("Errore durante la verifica dell'email.")
-      }
-
-      // Se l'email non è associata a nessun profilo nel database
-      if (!profileData) {
-        setAuthError("L'indirizzo email inserito non risulta registrato. Verifica i dati o procedi con la registrazione.")
-        setLoading(false)
-        return
-      }
-
-      // 2. Se l'email esiste, procediamo con l'invio sicuro del link tramite Supabase Auth
       const siteUrl = window.location.origin
-      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
         redirectTo: siteUrl,
       })
 
@@ -127,7 +109,7 @@ export function Auth({
         throw new Error(resetError.message)
       }
 
-      setAuthSuccess('Ti abbiamo inviato un\'email con il link sicuro per reimpostare la password.')
+      setAuthSuccess('Se l\'email è registrata, riceverai un link sicuro per reimpostare la password.')
     } catch (err) {
       setAuthError(translateAuthError(err.message))
     } finally {
@@ -158,6 +140,44 @@ export function Auth({
     setAuthError('')
     setAuthSuccess('')
 
+    const cleanFirstName = firstName.trim()
+    const cleanLastName = lastName.trim()
+    const rawPhone = phone.trim()
+    const cleanAge = age.trim()
+
+    if (!cleanFirstName || !cleanLastName) {
+      setAuthError("Nome e Cognome sono campi obbligatori.")
+      return
+    }
+
+    const nameRegex = /^[A-Za-zÀ-ÿ\s'-]+$/
+    if (!nameRegex.test(cleanFirstName) || !nameRegex.test(cleanLastName)) {
+      setAuthError("Nome e Cognome possono contenere solo lettere e spazi.")
+      return
+    }
+
+    let formattedPhone = null
+    if (rawPhone) {
+      const numericPhone = rawPhone.replace(/[^0-9]/g, '')
+      
+      if (numericPhone.length < 6 || numericPhone.length > 12) {
+        setAuthError("Inserisci un numero di cellulare valido.")
+        return
+      }
+
+      // Unisce prefisso scelto e numero pulito (es: +39 + 3331234567)
+      formattedPhone = `${phonePrefix}${numericPhone}`
+    }
+
+    let parsedAge = null
+    if (cleanAge !== '') {
+      parsedAge = parseInt(cleanAge, 10)
+      if (isNaN(parsedAge) || parsedAge < 10 || parsedAge > 120) {
+        setAuthError("Inserisci un valore di età valido compreso tra 10 e 120 anni.")
+        return
+      }
+    }
+
     if (!privacyAccepted) {
       setAuthError("Devi accettare l'Informativa sulla Privacy per poter creare un account.")
       return
@@ -173,10 +193,10 @@ export function Auth({
         options: {
           emailRedirectTo: siteUrl,
           data: {
-            first_name: firstName,
-            last_name: lastName,
-            phone: phone,
-            age: parseInt(age) || null
+            first_name: cleanFirstName,
+            last_name: cleanLastName,
+            phone: formattedPhone,
+            age: parsedAge
           }
         }
       })
@@ -197,9 +217,10 @@ export function Auth({
       style={{ 
         position: 'relative',
         zIndex: 1,
-        '--primary-color': salonSettings.primary_color || '#2563eb',
-        '--accent-color': salonSettings.accent_color || '#D4AF37',
-        '--secondary-color': salonSettings.secondary_color || '#1E293B',
+        '--accent-color': '#C5A059',
+        '--text-main': '#f3f4f6',
+        '--text-muted': '#9ca3af',
+        '--border-color': '#2a3241',
         fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
         padding: '40px 20px', 
         display: 'flex', 
@@ -207,7 +228,8 @@ export function Auth({
         justifyContent: 'center',
         alignItems: 'center',
         minHeight: '100vh',
-        backgroundColor: '#f8fafc',
+        backgroundColor: '#0f1115',
+        color: 'var(--text-main)',
         boxSizing: 'border-box'
       }}
     >
@@ -221,7 +243,7 @@ export function Auth({
             fontSize: '1.8rem', 
             fontWeight: 800, 
             margin: 0, 
-            color: 'var(--secondary-color)',
+            color: 'var(--text-main)',
             letterSpacing: '-0.025em',
             lineHeight: '1.2'
           }}>
@@ -240,7 +262,7 @@ export function Auth({
             display: 'block', 
             fontSize: '0.85rem', 
             marginTop: '6px',
-            color: '#64748b',
+            color: 'var(--text-muted)',
             fontWeight: 600,
             letterSpacing: '0.05em',
             textTransform: 'uppercase'
@@ -251,11 +273,11 @@ export function Auth({
 
         {/* Card Contenitore Principale */}
         <div style={{
-          backgroundColor: '#ffffff',
+          backgroundColor: '#181c24',
           borderRadius: '16px',
           padding: '32px 28px',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px -2px rgba(0, 0, 0, 0.02)',
-          border: '1px solid #e2e8f0',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.4)',
+          border: '1px solid var(--border-color)',
           width: '100%',
           boxSizing: 'border-box'
         }}>
@@ -264,8 +286,8 @@ export function Auth({
 
           {isResettingPassword ? (
             <div>
-              <h2 style={{ textAlign: 'center', color: 'var(--secondary-color)', marginTop: 0, fontSize: '1.2rem', fontWeight: 700 }}>Nuova Password</h2>
-              <p style={{ textAlign: 'center', color: '#64748b', fontSize: '13px', marginBottom: '20px' }}>
+              <h2 style={{ textAlign: 'center', color: 'var(--text-main)', marginTop: 0, fontSize: '1.2rem', fontWeight: 700 }}>Nuova Password</h2>
+              <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', marginBottom: '20px' }}>
                 Inserisci la nuova password per il tuo account.
               </p>
               <form onSubmit={handleUpdatePassword} style={formStyle}>
@@ -284,8 +306,8 @@ export function Auth({
             </div>
           ) : isForgotPassword ? (
             <div>
-              <h2 style={{ textAlign: 'center', color: 'var(--secondary-color)', marginTop: 0, fontSize: '1.2rem', fontWeight: 700 }}>Recupera Password</h2>
-              <p style={{ textAlign: 'center', color: '#64748b', fontSize: '13px', marginBottom: '20px' }}>
+              <h2 style={{ textAlign: 'center', color: 'var(--text-main)', marginTop: 0, fontSize: '1.2rem', fontWeight: 700 }}>Recupera Password</h2>
+              <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', marginBottom: '20px' }}>
                 Inserisci la tua email per ricevere il link di recupero sicuro.
               </p>
               <form onSubmit={handleForgotPassword} style={formStyle}>
@@ -298,7 +320,7 @@ export function Auth({
                   style={inputStyle} 
                 />
                 <button type="submit" disabled={loading} style={btnPrimaryStyle}>
-                  {loading ? 'Verifica in corso...' : 'Invia Link di Recupero'}
+                  {loading ? 'Invio in corso...' : 'Invia Link di Recupero'}
                 </button>
                 <p style={linkTextStyle}>
                   Torna al <span onClick={() => { setIsForgotPassword(false); setAuthError(''); setAuthSuccess(''); }} style={linkStyle}>Login</span>
@@ -307,8 +329,8 @@ export function Auth({
             </div>
           ) : !isRegistering ? (
             <form onSubmit={handleLogin} style={formStyle}>
-              <h2 style={{ textAlign: 'center', color: 'var(--secondary-color)', marginTop: 0, fontSize: '1.2rem', marginBottom: '4px', fontWeight: 700 }}>Area Riservata</h2>
-              <p style={{ textAlign: 'center', color: '#64748b', fontSize: '13px', marginBottom: '20px' }}>Accedi per gestire le tue prenotazioni</p>
+              <h2 style={{ textAlign: 'center', color: 'var(--text-main)', marginTop: 0, fontSize: '1.2rem', marginBottom: '4px', fontWeight: 700 }}>Area Riservata</h2>
+              <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', marginBottom: '20px' }}>Accedi per gestire le tue prenotazioni</p>
 
               <input type="email" placeholder="Indirizzo Email" value={email} onChange={e => setEmail(e.target.value)} required style={inputStyle} />
               <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={inputStyle} />
@@ -316,7 +338,7 @@ export function Auth({
               <div style={{ textAlign: 'right', marginTop: '-2px' }}>
                 <span 
                   onClick={() => { setIsForgotPassword(true); setAuthError(''); setAuthSuccess(''); }} 
-                  style={{ ...linkStyle, fontSize: '12px', color: '#64748b', fontWeight: 600 }}
+                  style={{ ...linkStyle, fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}
                 >
                   Password dimenticata?
                 </span>
@@ -331,15 +353,47 @@ export function Auth({
             </form>
           ) : (
             <form onSubmit={handleRegister} style={formStyle}>
-              <h2 style={{ textAlign: 'center', color: 'var(--secondary-color)', marginTop: 0, fontSize: '1.2rem', marginBottom: '4px', fontWeight: 700 }}>Crea Account</h2>
-              <p style={{ textAlign: 'center', color: '#64748b', fontSize: '13px', marginBottom: '20px' }}>Inserisci i tuoi dati per registrarti</p>
+              <h2 style={{ textAlign: 'center', color: 'var(--text-main)', marginTop: 0, fontSize: '1.2rem', marginBottom: '4px', fontWeight: 700 }}>Crea Account</h2>
+              <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', marginBottom: '20px' }}>Inserisci i tuoi dati per registrarti</p>
 
               <input type="text" placeholder="Nome" value={firstName} onChange={e => setFirstName(e.target.value)} required style={inputStyle} />
               <input type="text" placeholder="Cognome" value={lastName} onChange={e => setLastName(e.target.value)} required style={inputStyle} />
+              
               <div style={{ display: 'flex', gap: '10px' }}>
-                <input type="number" placeholder="Età" value={age} onChange={e => setAge(e.target.value)} required style={{ ...inputStyle, flex: 1 }} />
-                <input type="tel" placeholder="Cellulare" value={phone} onChange={e => setPhone(e.target.value)} required style={{ ...inputStyle, flex: 2 }} />
+                <input type="number" placeholder="Età" min="10" max="120" value={age} onChange={e => setAge(e.target.value)} required style={{ ...inputStyle, flex: '0 0 75px' }} />
+                
+                {/* Gruppo Prefisso + Telefono */}
+                <div style={{ display: 'flex', flex: 1, gap: '4px' }}>
+                  <select 
+                    value={phonePrefix} 
+                    onChange={e => setPhonePrefix(e.target.value)}
+                    style={{
+                      ...inputStyle,
+                      flex: '0 0 85px',
+                      padding: '11px 4px',
+                      cursor: 'pointer',
+                      fontSize: '13px'
+                    }}
+                  >
+                    <option value="+39">🇮🇹 +39</option>
+                    <option value="+41">🇨🇭 +41</option>
+                    <option value="+33">🇫🇷 +33</option>
+                    <option value="+49">🇩🇪 +49</option>
+                    <option value="+34">🇪🇸 +34</option>
+                    <option value="+44">🇬🇧 +44</option>
+                  </select>
+
+                  <input 
+                    type="tel" 
+                    placeholder="Cellulare" 
+                    value={phone} 
+                    onChange={e => setPhone(e.target.value)} 
+                    required 
+                    style={{ ...inputStyle, flex: 1 }} 
+                  />
+                </div>
               </div>
+
               <input type="email" placeholder="Indirizzo Email" value={email} onChange={e => setEmail(e.target.value)} required style={inputStyle} />
               <input type="password" placeholder="Password (min. 6 caratteri)" value={password} onChange={e => setPassword(e.target.value)} required style={inputStyle} />
               
@@ -349,16 +403,16 @@ export function Auth({
                   id="privacy" 
                   checked={privacyAccepted} 
                   onChange={e => setPrivacyAccepted(e.target.checked)} 
-                  style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: 'var(--primary-color)' }}
+                  style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: 'var(--accent-color)' }}
                 />
-                <label htmlFor="privacy" style={{ color: '#475569', fontSize: '12px', cursor: 'pointer' }}>
+                <label htmlFor="privacy" style={{ color: 'var(--text-muted)', fontSize: '12px', cursor: 'pointer' }}>
                   Accetto l'
                   <span 
                     onClick={(e) => {
                       e.preventDefault()
                       setShowPrivacyModal(true)
                     }}
-                    style={{ color: 'var(--secondary-color)', textDecoration: 'underline', fontWeight: 700, cursor: 'pointer', marginLeft: '3px' }}
+                    style={{ color: 'var(--text-main)', textDecoration: 'underline', fontWeight: 700, cursor: 'pointer', marginLeft: '3px' }}
                   >
                     Informativa sulla Privacy
                   </span>
@@ -384,7 +438,7 @@ export function Auth({
           left: 0,
           right: 0,
           bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          backgroundColor: 'rgba(11, 14, 19, 0.75)',
           backdropFilter: 'blur(4px)',
           zIndex: 1000,
           display: 'flex',
@@ -393,21 +447,21 @@ export function Auth({
           padding: '20px'
         }}>
           <div style={{
-            backgroundColor: '#ffffff',
-            border: '1px solid #e2e8f0',
+            backgroundColor: '#181c24',
+            border: '1px solid var(--border-color)',
             borderRadius: '16px',
             padding: '28px',
             maxWidth: '480px',
             maxHeight: '80vh',
             overflowY: 'auto',
-            color: '#1e293b',
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)'
+            color: 'var(--text-main)',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
           }}>
-            <h3 style={{ color: 'var(--primary-color)', marginTop: 0, fontSize: '1.15rem', fontWeight: 700 }}>Informativa sulla Privacy</h3>
-            <p style={{ fontSize: '13px', color: '#475569', lineHeight: '1.6' }}>
+            <h3 style={{ color: 'var(--accent-color)', marginTop: 0, fontSize: '1.15rem', fontWeight: 700 }}>Informativa sulla Privacy</h3>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.6' }}>
               Ai sensi del Regolamento UE 2016/679 (GDPR), i dati raccolti (Nome, Cognome, Età, Telefono, Email) sono trattati esclusivamente per la gestione delle prenotazioni e dell'account utente presso <strong>{appName}</strong>.
             </p>
-            <p style={{ fontSize: '13px', color: '#475569', lineHeight: '1.6' }}>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.6' }}>
               I dati sono protetti e non ceduti a terzi. Puoi richiederne la cancellazione in qualsiasi momento direttamente dall'applicazione.
             </p>
             <button 
@@ -417,13 +471,13 @@ export function Auth({
                 padding: '12px',
                 borderRadius: '8px',
                 border: 'none',
-                backgroundColor: 'var(--primary-color)',
-                color: '#FFF',
+                backgroundColor: 'var(--accent-color)',
+                color: '#0f1115',
                 fontWeight: 600,
                 cursor: 'pointer',
                 marginTop: '16px',
                 fontSize: '0.9rem',
-                boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)'
+                boxShadow: '0 2px 4px rgba(0, 0, 0, 0.3)'
               }}
             >
               Ho capito
@@ -442,9 +496,9 @@ const inputStyle = {
   width: '100%', 
   padding: '11px 14px', 
   borderRadius: '8px', 
-  border: '1px solid #cbd5e1', 
-  backgroundColor: '#f8fafc', 
-  color: '#1e293b', 
+  border: '1px solid var(--border-color)', 
+  backgroundColor: '#11141b', 
+  color: 'var(--text-main)', 
   boxSizing: 'border-box',
   outline: 'none',
   fontSize: '14px',
@@ -456,20 +510,20 @@ const btnPrimaryStyle = {
   padding: '12px', 
   borderRadius: '8px', 
   border: 'none', 
-  backgroundColor: 'var(--primary-color)', 
-  color: '#FFF', 
+  backgroundColor: 'var(--accent-color)', 
+  color: '#0f1115', 
   fontWeight: 600, 
   fontSize: '0.9rem',
   cursor: 'pointer',
   marginTop: '4px',
-  boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)',
+  boxShadow: '0 2px 4px rgba(0, 0, 0, 0.3)',
   transition: 'background 0.2s'
 }
 
 const errorBoxStyle = { 
-  background: '#fee2e2', 
-  border: '1px solid #fca5a5',
-  color: '#b91c1c', 
+  background: '#3f2222', 
+  border: '1px solid #7f1d1d',
+  color: '#fca5a5', 
   padding: '12px 14px', 
   borderRadius: '8px', 
   marginBottom: '18px',
@@ -478,9 +532,9 @@ const errorBoxStyle = {
 }
 
 const successBoxStyle = { 
-  background: '#dcfce7', 
-  border: '1px solid #86efac',
-  color: '#166534', 
+  background: '#143825', 
+  border: '1px solid #1e462b',
+  color: '#4ade80', 
   padding: '12px 14px', 
   borderRadius: '8px', 
   marginBottom: '18px',
@@ -489,5 +543,5 @@ const successBoxStyle = {
   fontWeight: 500
 }
 
-const linkTextStyle = { textAlign: 'center', color: '#64748b', fontSize: '13px', marginTop: '14px', marginBottom: 0 }
-const linkStyle = { color: 'var(--secondary-color)', cursor: 'pointer', textDecoration: 'underline', fontWeight: 700 }
+const linkTextStyle = { textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', marginTop: '14px', marginBottom: 0 }
+const linkStyle = { color: 'var(--text-main)', cursor: 'pointer', textDecoration: 'underline', fontWeight: 700 }
